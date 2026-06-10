@@ -1,0 +1,17 @@
+# FLS Detection Dataset - YOLO format
+# Forward-Looking Sonar object detection
+# Classes: victim, boat, plane
+
+# Paths (relative to this yaml file, or absolute)
+path: /root/ultralytics/ultralytics/dataset/FLS_Detection_YOLO
+train: images/train
+val: images/val
+
+# Number of classes
+nc: 3
+
+# Class names
+names:
+  0: victim
+  1: boat
+  2: plane
