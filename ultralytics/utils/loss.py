@@ -113,8 +113,8 @@ class BboxLoss(nn.Module):
     Supports WIoU v3 (Wise-IoU with outlier-degree attention) when `wiou` is True.
     """
 
-    def __init__(self, reg_max: int = 16, wiou: bool = False, wiou_momentum: float = 0.99,
-                 wiou_alpha: float = 1.9, wiou_delta: float = 1.0):
+    def __init__(self, reg_max: int = 16, wiou: bool = False, wiou_momentum: float = 0.9,
+                 wiou_alpha: float = 2.0, wiou_delta: float = 3.0):
         """Initialize the BboxLoss module with regularization maximum and DFL settings.
 
         Args:
@@ -128,7 +128,8 @@ class BboxLoss(nn.Module):
         self.dfl_loss = DFLoss(reg_max) if reg_max > 1 else None
         self.wiou = wiou
         if wiou:
-            self.register_buffer('wiou_iou_mean', torch.tensor(1.0))
+            # Start mean at 0.5 so early β ≈ 1.0–2.0 → r ≥ 1 during critical early epochs
+            self.register_buffer('wiou_iou_mean', torch.tensor(0.5))
             self.register_buffer('wiou_alpha', torch.tensor(wiou_alpha, dtype=torch.float32))
             self.register_buffer('wiou_delta', torch.tensor(wiou_delta, dtype=torch.float32))
             self.wiou_momentum = wiou_momentum
@@ -426,9 +427,9 @@ class v8DetectionLoss:
         self.bbox_loss = BboxLoss(
             m.reg_max,
             wiou=getattr(h, "wiou", False),
-            wiou_momentum=getattr(h, "wiou_momentum", 0.99),
-            wiou_alpha=getattr(h, "wiou_alpha", 1.9),
-            wiou_delta=getattr(h, "wiou_delta", 1.0),
+            wiou_momentum=getattr(h, "wiou_momentum", 0.9),
+            wiou_alpha=getattr(h, "wiou_alpha", 2.0),
+            wiou_delta=getattr(h, "wiou_delta", 3.0),
         ).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 
