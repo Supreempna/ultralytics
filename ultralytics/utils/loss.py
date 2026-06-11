@@ -127,11 +127,15 @@ class BboxLoss(nn.Module):
         super().__init__()
         self.dfl_loss = DFLoss(reg_max) if reg_max > 1 else None
         self.wiou = wiou
-        self.wiou_momentum = wiou_momentum
-        self.wiou_alpha = wiou_alpha
-        self.wiou_delta = wiou_delta
         if wiou:
             self.register_buffer('wiou_iou_mean', torch.tensor(1.0))
+            self.register_buffer('wiou_alpha', torch.tensor(wiou_alpha, dtype=torch.float32))
+            self.register_buffer('wiou_delta', torch.tensor(wiou_delta, dtype=torch.float32))
+            self.wiou_momentum = wiou_momentum
+        else:
+            self.wiou_alpha = wiou_alpha
+            self.wiou_delta = wiou_delta
+            self.wiou_momentum = wiou_momentum
 
     def forward(
         self,
