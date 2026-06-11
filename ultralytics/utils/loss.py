@@ -108,12 +108,30 @@ class DFLoss(nn.Module):
 
 
 class BboxLoss(nn.Module):
-    """Criterion class for computing training losses for bounding boxes."""
+    """Criterion class for computing training losses for bounding boxes.
 
-    def __init__(self, reg_max: int = 16):
-        """Initialize the BboxLoss module with regularization maximum and DFL settings."""
+    Supports WIoU v3 (Wise-IoU with outlier-degree attention) when `wiou` is True.
+    """
+
+    def __init__(self, reg_max: int = 16, wiou: bool = False, wiou_momentum: float = 0.99,
+                 wiou_alpha: float = 1.9, wiou_delta: float = 1.0):
+        """Initialize the BboxLoss module with regularization maximum and DFL settings.
+
+        Args:
+            reg_max (int): Maximum regularization value for DFL.
+            wiou (bool): If True, use WIoU v3 loss instead of plain IoU loss.
+            wiou_momentum (float): Momentum for running mean of IoU loss in WIoU v3.
+            wiou_alpha (float): WIoU v3 attention exponent base.
+            wiou_delta (float): WIoU v3 attention inflection point.
+        """
         super().__init__()
         self.dfl_loss = DFLoss(reg_max) if reg_max > 1 else None
+        self.wiou = wiou
+        self.wiou_momentum = wiou_momentum
+        self.wiou_alpha = wiou_alpha
+        self.wiou_delta = wiou_delta
+        if wiou:
+            self.register_buffer('wiou_iou_mean', torch.tensor(1.0))
 
     def forward(
         self,
@@ -127,10 +145,46 @@ class BboxLoss(nn.Module):
         imgsz: torch.Tensor,
         stride: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Compute IoU and DFL losses for bounding boxes."""
+        """Compute IoU and DFL losses for bounding boxes.
+
+        When self.wiou is True, applies WIoU v3: multiplicative center-distance attention
+        with outlier-degree dynamic weighting. Early epochs: strong center-alignment
+        gradient. Late epochs: balanced refinement via β-based attention.
+        """
+        eps = 1e-7
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
-        iou = bbox_iou(pred_bboxes[fg_mask], target_bboxes[fg_mask], xywh=False, WIoU=True)
-        loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
+        pred_boxes = pred_bboxes[fg_mask]
+        target_boxes = target_bboxes[fg_mask]
+
+        if self.wiou:
+            # --- Raw IoU ---
+            iou_raw = bbox_iou(pred_boxes, target_boxes, xywh=False)
+
+            # --- WIoU v1 gate: center-distance attention ---
+            b1_x1, b1_y1, b1_x2, b1_y2 = pred_boxes.chunk(4, -1)
+            b2_x1, b2_y1, b2_x2, b2_y2 = target_boxes.chunk(4, -1)
+            cw = b1_x2.maximum(b2_x2) - b1_x1.minimum(b2_x1)      # convex hull width
+            ch = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)      # convex hull height
+            c2 = cw.pow(2).detach() + ch.pow(2).detach() + eps     # detach: constant scaling
+            rho2 = ((b2_x1 + b2_x2 - b1_x1 - b1_x2).pow(2) +
+                    (b2_y1 + b2_y2 - b1_y1 - b1_y2).pow(2)) / 4    # center distance²
+            iou = iou_raw * torch.exp(-rho2 / c2)                  # WIoU v1 score
+
+            # --- WIoU v3: outlier-degree attention ---
+            with torch.no_grad():
+                if self.training:
+                    iou_loss_batch = (1.0 - iou_raw).mean()
+                    self.wiou_iou_mean = (self.wiou_momentum * self.wiou_iou_mean +
+                                          (1.0 - self.wiou_momentum) * iou_loss_batch)
+                # β = outlier degree: >1 means this anchor is harder than average
+                beta = (1.0 - iou_raw) / (self.wiou_iou_mean + eps)
+                # r = attention factor: peaks at medium-quality, suppresses extremes
+                r = beta / (self.wiou_delta * self.wiou_alpha.pow(beta - self.wiou_delta))
+                r = r.clamp(0.0, 3.0)  # bound extreme values
+            loss_iou = (r * (1.0 - iou) * weight).sum() / target_scores_sum
+        else:
+            iou = bbox_iou(pred_boxes, target_boxes, xywh=False, CIoU=True)
+            loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
 
         # DFL loss
         if self.dfl_loss:
@@ -365,7 +419,13 @@ class v8DetectionLoss:
             stride=self.stride.tolist(),
             topk2=tal_topk2,
         )
-        self.bbox_loss = BboxLoss(m.reg_max).to(device)
+        self.bbox_loss = BboxLoss(
+            m.reg_max,
+            wiou=getattr(h, "wiou", False),
+            wiou_momentum=getattr(h, "wiou_momentum", 0.99),
+            wiou_alpha=getattr(h, "wiou_alpha", 1.9),
+            wiou_delta=getattr(h, "wiou_delta", 1.0),
+        ).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 
     def preprocess(self, targets: torch.Tensor, batch_size: int, scale_tensor: torch.Tensor) -> torch.Tensor:

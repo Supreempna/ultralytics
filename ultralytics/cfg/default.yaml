@@ -107,6 +107,10 @@ pose: 12.0 # (float) pose loss gain (pose tasks)
 kobj: 1.0 # (float) keypoint objectness loss gain (pose tasks)
 rle: 1.0 # (float) rle loss gain (pose tasks)
 angle: 1.0 # (float) oriented angle loss gain (obb tasks)
+wiou: False # (bool) use WIoU v3 loss (Wise-IoU with outlier-degree attention) for detection tasks
+wiou_momentum: 0.99 # (float) WIoU v3 running-mean momentum for IoU loss
+wiou_alpha: 1.9 # (float) WIoU v3 attention exponent base
+wiou_delta: 1.0 # (float) WIoU v3 attention inflection point (β=δ gives r=1)
 nbs: 64 # (int) nominal batch size used for loss normalization
 hsv_h: 0.015 # (float) HSV hue augmentation fraction
 hsv_s: 0.7 # (float) HSV saturation augmentation fraction
