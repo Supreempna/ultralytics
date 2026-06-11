@@ -110,6 +110,7 @@ def bbox_iou(
     DIoU: bool = False,
     CIoU: bool = False,
     MPDIoU: bool = False,
+    EIoU: bool = False,
     eps: float = 1e-7,
 ) -> torch.Tensor:
     """Calculate the Intersection over Union (IoU) between bounding boxes.
@@ -126,12 +127,13 @@ def bbox_iou(
         GIoU (bool, optional): If True, calculate Generalized IoU.
         DIoU (bool, optional): If True, calculate Distance IoU.
         CIoU (bool, optional): If True, calculate Complete IoU.
-        MPDIoU (bool, optional): If True, calculate MPDIoU (IoU minus corner-point distances normalized by convex
-            hull diagonal). Scale-adaptive — suitable for small objects.
+        MPDIoU (bool, optional): If True, calculate MPDIoU (IoU minus corner-point distances).
+        EIoU (bool, optional): If True, calculate Efficient IoU (IoU minus center distance, width, and height
+            penalties separately). Good for small objects — avoids CIoU's unstable aspect-ratio term.
         eps (float, optional): A small value to avoid division by zero.
 
     Returns:
-        (torch.Tensor): IoU, GIoU, DIoU, CIoU, or MPDIoU values depending on the specified flags.
+        (torch.Tensor): IoU, GIoU, DIoU, CIoU, MPDIoU, or EIoU values depending on the specified flags.
     """
     # Get the coordinates of bounding boxes
     if xywh:  # transform from xywh to xyxy
@@ -182,6 +184,19 @@ def bbox_iou(
         ch = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)  # convex hull height
         c_sq = cw.pow(2) + ch.pow(2) + eps
         return iou - (d1_sq + d2_sq) / c_sq  # MPDIoU
+    elif EIoU:
+        # EIoU: Efficient IoU (Zhang et al., arXiv 2101.08158)
+        # Splits CIoU's aspect-ratio term into independent width & height penalties.
+        # More stable for small objects where w/h ratio is noisy.
+        cw = b1_x2.maximum(b2_x2) - b1_x1.minimum(b2_x1)  # convex hull width
+        ch = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)  # convex hull height
+        c2 = cw.pow(2) + ch.pow(2) + eps                     # convex diagonal squared
+        rho2 = (                                           # center distance squared
+            (b2_x1 + b2_x2 - b1_x1 - b1_x2).pow(2) + (b2_y1 + b2_y2 - b1_y1 - b1_y2).pow(2)
+        ) / 4
+        rho_w2 = (w1 - w2).pow(2)                           # width difference squared
+        rho_h2 = (h1 - h2).pow(2)                           # height difference squared
+        return iou - rho2 / c2 - rho_w2 / cw.pow(2) - rho_h2 / ch.pow(2)  # EIoU
     return iou  # IoU
 
 
