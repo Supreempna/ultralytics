@@ -111,7 +111,6 @@ def bbox_iou(
     CIoU: bool = False,
     MPDIoU: bool = False,
     eps: float = 1e-7,
-    imgsz: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Calculate the Intersection over Union (IoU) between bounding boxes.
 
@@ -127,11 +126,9 @@ def bbox_iou(
         GIoU (bool, optional): If True, calculate Generalized IoU.
         DIoU (bool, optional): If True, calculate Distance IoU.
         CIoU (bool, optional): If True, calculate Complete IoU.
-        MPDIoU (bool, optional): If True, calculate MPDIoU (IoU minus normalized corner-point distances). Requires
-            `imgsz` for strict paper definition (image height and width in the same coordinate system as the boxes).
+        MPDIoU (bool, optional): If True, calculate MPDIoU (IoU minus corner-point distances normalized by convex
+            hull diagonal). Scale-adaptive — suitable for small objects.
         eps (float, optional): A small value to avoid division by zero.
-        imgsz (torch.Tensor | None, optional): Image dimensions as (h, w) in the same coordinate system as box1/box2.
-            Required for strict MPDIoU normalization.
 
     Returns:
         (torch.Tensor): IoU, GIoU, DIoU, CIoU, or MPDIoU values depending on the specified flags.
@@ -175,18 +172,15 @@ def bbox_iou(
         c_area = cw * ch + eps  # convex area
         return iou - (c_area - union) / c_area  # GIoU https://arxiv.org/pdf/1902.09630.pdf
     elif MPDIoU:
-        # MPDIoU: IoU minus normalized corner-point distances (Ma & Xu, arXiv 2307.07662)
+        # MPDIoU: IoU minus corner-point distances normalized by convex hull diagonal
+        # (Ma & Xu, arXiv 2307.07662). Using convex hull (smallest enclosing box) diagonal
+        # instead of image diagonal — better gradient for small objects.
         # d1 = top-left distance, d2 = bottom-right distance
         d1_sq = (b1_x1 - b2_x1).pow(2) + (b1_y1 - b2_y1).pow(2)
         d2_sq = (b1_x2 - b2_x2).pow(2) + (b1_y2 - b2_y2).pow(2)
-        # Normalization constant: image diagonal squared (strict paper definition)
-        if imgsz is not None:
-            h_img, w_img = imgsz[..., 0].unsqueeze(-1), imgsz[..., 1].unsqueeze(-1)
-        else:
-            # Fallback: convex hull diagonal to preserve backward compatibility
-            w_img = b1_x2.maximum(b2_x2) - b1_x1.minimum(b2_x1)
-            h_img = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)
-        c_sq = w_img.pow(2) + h_img.pow(2) + eps
+        cw = b1_x2.maximum(b2_x2) - b1_x1.minimum(b2_x1)  # convex hull width
+        ch = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)  # convex hull height
+        c_sq = cw.pow(2) + ch.pow(2) + eps
         return iou - (d1_sq + d2_sq) / c_sq  # MPDIoU
     return iou  # IoU
 
