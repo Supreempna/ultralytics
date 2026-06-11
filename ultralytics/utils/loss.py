@@ -110,11 +110,11 @@ class DFLoss(nn.Module):
 class BboxLoss(nn.Module):
     """Criterion class for computing training losses for bounding boxes.
 
-    Supports WIoU v3 (Wise-IoU with outlier-degree attention) when `wiou` is True.
+    Supports WIoU v3 (Wise-IoU) and Inner-IoU (center-scaled boxes for small objects).
     """
 
-    def __init__(self, reg_max: int = 16, wiou: bool = False, wiou_momentum: float = 0.9,
-                 wiou_alpha: float = 2.0, wiou_delta: float = 3.0):
+    def __init__(self, reg_max: int = 16, wiou: bool = False, wiou_momentum: float = 0.99,
+                 wiou_alpha: float = 1.9, wiou_delta: float = 1.0, inner_ratio: float = 0.0):
         """Initialize the BboxLoss module with regularization maximum and DFL settings.
 
         Args:
@@ -123,13 +123,16 @@ class BboxLoss(nn.Module):
             wiou_momentum (float): Momentum for running mean of IoU loss in WIoU v3.
             wiou_alpha (float): WIoU v3 attention exponent base.
             wiou_delta (float): WIoU v3 attention inflection point.
+            inner_ratio (float): If > 0, use Inner-IoU: scale boxes toward center by this ratio
+                before computing IoU. 0.7–0.8 recommended for small objects (<0.1 image size).
+                Reduces boundary noise, focuses on reliable center region. 0.0 = disabled.
         """
         super().__init__()
         self.dfl_loss = DFLoss(reg_max) if reg_max > 1 else None
         self.wiou = wiou
+        self.inner_ratio = inner_ratio
         if wiou:
-            # Start mean at 0.5 so early β ≈ 1.0–2.0 → r ≥ 1 during critical early epochs
-            self.register_buffer('wiou_iou_mean', torch.tensor(0.5))
+            self.register_buffer('wiou_iou_mean', torch.tensor(1.0))
             self.register_buffer('wiou_alpha', torch.tensor(wiou_alpha, dtype=torch.float32))
             self.register_buffer('wiou_delta', torch.tensor(wiou_delta, dtype=torch.float32))
             self.wiou_momentum = wiou_momentum
@@ -160,6 +163,23 @@ class BboxLoss(nn.Module):
         weight = target_scores.sum(-1)[fg_mask].unsqueeze(-1)
         pred_boxes = pred_bboxes[fg_mask]
         target_boxes = target_bboxes[fg_mask]
+
+        # --- Inner-IoU: scale boxes toward center to reduce boundary noise ---
+        # Effective for small objects where ±1px annotation error matters.
+        if self.inner_ratio > 0:
+            r = self.inner_ratio
+            # pred_boxes
+            cx_p = (pred_boxes[..., 0] + pred_boxes[..., 2]) / 2
+            cy_p = (pred_boxes[..., 1] + pred_boxes[..., 3]) / 2
+            hw_p = (pred_boxes[..., 2] - pred_boxes[..., 0]) * r / 2
+            hh_p = (pred_boxes[..., 3] - pred_boxes[..., 1]) * r / 2
+            pred_boxes = torch.stack([cx_p - hw_p, cy_p - hh_p, cx_p + hw_p, cy_p + hh_p], dim=-1)
+            # target_boxes
+            cx_t = (target_boxes[..., 0] + target_boxes[..., 2]) / 2
+            cy_t = (target_boxes[..., 1] + target_boxes[..., 3]) / 2
+            hw_t = (target_boxes[..., 2] - target_boxes[..., 0]) * r / 2
+            hh_t = (target_boxes[..., 3] - target_boxes[..., 1]) * r / 2
+            target_boxes = torch.stack([cx_t - hw_t, cy_t - hh_t, cx_t + hw_t, cy_t + hh_t], dim=-1)
 
         if self.wiou:
             # --- Raw IoU ---
@@ -427,9 +447,10 @@ class v8DetectionLoss:
         self.bbox_loss = BboxLoss(
             m.reg_max,
             wiou=getattr(h, "wiou", False),
-            wiou_momentum=getattr(h, "wiou_momentum", 0.9),
-            wiou_alpha=getattr(h, "wiou_alpha", 2.0),
-            wiou_delta=getattr(h, "wiou_delta", 3.0),
+            wiou_momentum=getattr(h, "wiou_momentum", 0.99),
+            wiou_alpha=getattr(h, "wiou_alpha", 1.9),
+            wiou_delta=getattr(h, "wiou_delta", 1.0),
+            inner_ratio=getattr(h, "inner_ratio", 0.0),
         ).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 
