@@ -110,11 +110,12 @@ class DFLoss(nn.Module):
 class BboxLoss(nn.Module):
     """Criterion class for computing training losses for bounding boxes.
 
-    Supports WIoU v3 (Wise-IoU) and Inner-IoU (center-scaled boxes for small objects).
+    Supports WIoU v3, Inner-IoU, and Alpha-IoU.
     """
 
     def __init__(self, reg_max: int = 16, wiou: bool = False, wiou_momentum: float = 0.99,
-                 wiou_alpha: float = 1.9, wiou_delta: float = 1.0, inner_ratio: float = 0.0):
+                 wiou_alpha: float = 1.9, wiou_delta: float = 1.0, inner_ratio: float = 0.0,
+                 alpha_iou: float = 1.0):
         """Initialize the BboxLoss module with regularization maximum and DFL settings.
 
         Args:
@@ -126,11 +127,15 @@ class BboxLoss(nn.Module):
             inner_ratio (float): If > 0, use Inner-IoU: scale boxes toward center by this ratio
                 before computing IoU. 0.7–0.8 recommended for small objects (<0.1 image size).
                 Reduces boundary noise, focuses on reliable center region. 0.0 = disabled.
+            alpha_iou (float): Alpha-IoU power exponent (≥ 1.0). >1 shifts gradient focus
+                toward high-IoU matches — helps late-stage refinement in short training.
+                1.0 = standard loss (disabled). 3.0 is common in literature.
         """
         super().__init__()
         self.dfl_loss = DFLoss(reg_max) if reg_max > 1 else None
         self.wiou = wiou
         self.inner_ratio = inner_ratio
+        self.alpha_iou = alpha_iou
         if wiou:
             self.register_buffer('wiou_iou_mean', torch.tensor(1.0))
             self.register_buffer('wiou_alpha', torch.tensor(wiou_alpha, dtype=torch.float32))
@@ -209,7 +214,13 @@ class BboxLoss(nn.Module):
             loss_iou = (r * (1.0 - iou) * weight).sum() / target_scores_sum
         else:
             iou = bbox_iou(pred_boxes, target_boxes, xywh=False, CIoU=True)
-            loss_iou = ((1.0 - iou) * weight).sum() / target_scores_sum
+            iou_loss = 1.0 - iou
+            # Alpha-IoU: power-transform shifts gradient focus toward high-IoU matches
+            # α=3 → 0.9 IoU gets ~2.5× gradient vs α=1; 0.3 IoU gets ~0.3×
+            # Drives late-stage refinement without touching early convergence
+            if self.alpha_iou > 1.0:
+                iou_loss = iou_loss.pow(self.alpha_iou)
+            loss_iou = (iou_loss * weight).sum() / target_scores_sum
 
         # DFL loss
         if self.dfl_loss:
@@ -451,6 +462,7 @@ class v8DetectionLoss:
             wiou_alpha=getattr(h, "wiou_alpha", 1.9),
             wiou_delta=getattr(h, "wiou_delta", 1.0),
             inner_ratio=getattr(h, "inner_ratio", 0.0),
+            alpha_iou=getattr(h, "alpha_iou", 1.0),
         ).to(device)
         self.proj = torch.arange(m.reg_max, dtype=torch.float, device=device)
 

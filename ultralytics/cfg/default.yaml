@@ -112,6 +112,7 @@ wiou_momentum: 0.99 # (float) WIoU v3 running-mean momentum for IoU loss
 wiou_alpha: 1.9 # (float) WIoU v3 attention exponent base
 wiou_delta: 1.0 # (float) WIoU v3 attention inflection point (β=δ gives r=1)
 inner_ratio: 0.0 # (float) Inner-IoU ratio: scale boxes toward center (0.7–0.8 for small objects, 0.0=off)
+alpha_iou: 1.0 # (float) Alpha-IoU power exponent (≥1.0, 1.0=off). 3.0 recommended; >1 focuses gradient on high-IoU matches
 nbs: 64 # (int) nominal batch size used for loss normalization
 hsv_h: 0.015 # (float) HSV hue augmentation fraction
 hsv_s: 0.7 # (float) HSV saturation augmentation fraction
