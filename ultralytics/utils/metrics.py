@@ -109,6 +109,7 @@ def bbox_iou(
     GIoU: bool = False,
     DIoU: bool = False,
     CIoU: bool = False,
+    MPDIoU: bool = False,
     eps: float = 1e-7,
 ) -> torch.Tensor:
     """Calculate the Intersection over Union (IoU) between bounding boxes.
@@ -125,6 +126,7 @@ def bbox_iou(
         GIoU (bool, optional): If True, calculate Generalized IoU.
         DIoU (bool, optional): If True, calculate Distance IoU.
         CIoU (bool, optional): If True, calculate Complete IoU.
+        MDIoU (bool, optional): If True, calculate Mean Distance IoU.
         eps (float, optional): A small value to avoid division by zero.
 
     Returns:
@@ -168,6 +170,14 @@ def bbox_iou(
             return iou - rho2 / c2  # DIoU
         c_area = cw * ch + eps  # convex area
         return iou - (c_area - union) / c_area  # GIoU https://arxiv.org/pdf/1902.09630.pdf
+    elif MPDIoU:
+        # 示例：MPDIoU 轻量化计算实现
+        d1_sq = (b1_x1 - b2_x1) ** 2 + (b1_y1 - b2_y1) ** 2
+        d2_sq = (b1_x2 - b2_x2) ** 2 + (b1_y2 - b2_y2) ** 2
+        cw = b2_x2 - b2_x1
+        ch = b2_y2 - b2_y1
+        c_sq = cw ** 2 + ch ** 2 + eps
+        return iou - (d1_sq + d2_sq) / c_sq # MPDIoU https://arxiv.org/abs/2307.07662
     return iou  # IoU
 
 

@@ -3,7 +3,7 @@
 # Classes: victim, boat, plane
 
 # Paths (relative to this yaml file, or absolute)
-path: /root/ultralytics/ultralytics/dataset/FLS_Detection_YOLO
+# Path: images和label就在同一目录下，且images和labels文件夹结构相同，可直接不行path，直接使用images/train和images/val
 train: images/train
 val: images/val
 
