@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
 from .conv import Conv, DWConv, GhostConv, LightConv, RepConv, autopad
-from .transformer import TransformerBlock
+from .transformer import LayerNorm2d, TransformerBlock
 
 __all__ = (
     "C1",
@@ -51,7 +51,10 @@ __all__ = (
     "RepVGGDW",
     "ResNetLayer",
     "SCDown",
+    "SimpleGate",
     "TorchVision",
+    "NAFBlock",
+    "NAFNet",
 )
 
 
@@ -2071,3 +2074,137 @@ class RealNVP(nn.Module):
             self.float()
         z, log_det = self.backward_p(x)
         return self.prior.log_prob(z) + log_det
+
+
+class SimpleGate(nn.Module):
+    """SimpleGate activation: split channels in half and multiply element-wise.
+
+    Implements the nonlinearity-free activation mechanism from NAFNet (Nonlinear Activation Free Network).
+    Replaces traditional activation functions like ReLU/GELU with a simple channel-splitting and
+    element-wise multiplication operation.
+
+    References:
+        https://github.com/megvii-research/NAFNet
+    """
+
+    def forward(self, x):
+        """Apply SimpleGate: split channels in half and return element-wise product.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (B, 2*C, H, W). Channel dimension must be even.
+
+        Returns:
+            (torch.Tensor): Output tensor of shape (B, C, H, W), half the input channels.
+        """
+        x1, x2 = x.chunk(2, dim=1)
+        return x1 * x2
+
+
+class NAFBlock(nn.Module):
+    """Nonlinear Activation Free Block with SimpleGate and Simplified Channel Attention.
+
+    This block from NAFNet replaces traditional nonlinear activation functions with SimpleGate for
+    image restoration tasks. It uses LayerNorm, depthwise convolutions, SimpleGate activation, and
+    Simplified Channel Attention (SCA) to achieve effective feature transformation without
+    conventional activations.
+
+    Attributes:
+        conv1 (nn.Conv2d): 1x1 convolution to expand channels.
+        conv2 (nn.Conv2d): 3x3 depthwise convolution for spatial mixing.
+        conv3 (nn.Conv2d): 1x1 convolution to project back to original channels.
+        sg (SimpleGate): SimpleGate activation (channel-split + multiply).
+        sca (nn.Sequential): Simplified Channel Attention module.
+        norm (LayerNorm2d): Layer normalization for 2D features.
+        beta (nn.Parameter): Learnable scaling parameter for residual connection.
+
+    Args:
+        c (int): Input/output channels.
+        dw_expand (int): Channel expansion factor for the depthwise convolution branch.
+    """
+
+    def __init__(self, c, dw_expand=2):
+        """Initialize NAFBlock with channel count and expansion factor.
+
+        Args:
+            c (int): Number of input/output channels.
+            dw_expand (int): Expansion factor for the internal channel dimension.
+        """
+        super().__init__()
+        dw_channel = c * dw_expand
+        self.conv1 = nn.Conv2d(c, dw_channel, 1)
+        self.conv2 = nn.Conv2d(dw_channel, dw_channel, 3, 1, 1, groups=dw_channel)  # DWConv
+        self.conv3 = nn.Conv2d(dw_channel // 2, c, 1)
+        self.sg = SimpleGate()
+        self.sca = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(dw_channel // 2, dw_channel // 2, 1),
+        )
+        self.norm = LayerNorm2d(c)
+        self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)))
+
+    def forward(self, x):
+        """Forward pass of NAFBlock.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (B, C, H, W).
+
+        Returns:
+            (torch.Tensor): Output tensor of shape (B, C, H, W).
+        """
+        identity = x
+        x = self.norm(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.sg(x)  # SimpleGate splits and multiplies: halves channels
+        x = self.sca(x) * x  # Simplified Channel Attention
+        x = self.conv3(x)
+        return identity + x * self.beta
+
+
+class NAFNet(nn.Module):
+    """NAFNet-based lightweight image denoising module for YOLO backbone preprocessing.
+
+    A compact denoising module that uses NAFBlocks with SimpleGate activation and global residual
+    learning (output = input - learned_noise). Designed to be inserted as the first component in
+    YOLO backbones for preprocessing noisy input images.
+
+    Attributes:
+        embed (nn.Conv2d): Input embedding convolution.
+        blocks (nn.Sequential): Stack of NAFBlocks for feature transformation.
+        recover (nn.Conv2d): Output recovery convolution.
+
+    Args:
+        c1 (int): Input channels.
+        c2 (int): Output channels.
+        mid_channels (int): Internal feature channels for NAFBlocks.
+        num_blocks (int): Number of NAFBlocks in the stack.
+    """
+
+    def __init__(self, c1, c2, mid_channels=16, num_blocks=2):
+        """Initialize NAFNet denoising module.
+
+        Args:
+            c1 (int): Number of input channels (e.g., 3 for RGB).
+            c2 (int): Number of output channels (typically same as c1).
+            mid_channels (int): Number of hidden channels in NAFBlocks.
+            num_blocks (int): Number of NAFBlocks to stack.
+        """
+        super().__init__()
+        self.embed = nn.Conv2d(c1, mid_channels, 3, 1, 1)
+        self.blocks = nn.Sequential(*(NAFBlock(mid_channels) for _ in range(num_blocks)))
+        self.recover = nn.Conv2d(mid_channels, c2, 3, 1, 1)
+
+    def forward(self, x):
+        """Forward pass: learn noise residual and subtract from input.
+
+        Args:
+            x (torch.Tensor): Input image tensor of shape (B, C, H, W).
+
+        Returns:
+            (torch.Tensor): Denoised output tensor of shape (B, C, H, W).
+        """
+        identity = x
+        feat = self.embed(x)
+        feat = self.blocks(feat)
+        out = self.recover(feat)
+        return identity - out
