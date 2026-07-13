@@ -45,6 +45,8 @@ __all__ = (
     "HGBlock",
     "HGStem",
     "ImagePoolingAttn",
+    "NAFBlock",
+    "NAFNet",
     "Proto",
     "RepC3",
     "RepNCSPELAN4",
@@ -53,8 +55,6 @@ __all__ = (
     "SCDown",
     "SimpleGate",
     "TorchVision",
-    "NAFBlock",
-    "NAFNet",
 )
 
 
@@ -2079,9 +2079,9 @@ class RealNVP(nn.Module):
 class SimpleGate(nn.Module):
     """SimpleGate activation: split channels in half and multiply element-wise.
 
-    Implements the nonlinearity-free activation mechanism from NAFNet (Nonlinear Activation Free Network).
-    Replaces traditional activation functions like ReLU/GELU with a simple channel-splitting and
-    element-wise multiplication operation.
+    Implements the nonlinearity-free activation mechanism from NAFNet (Nonlinear Activation Free Network). Replaces
+    traditional activation functions like ReLU/GELU with a simple channel-splitting and element-wise multiplication
+    operation.
 
     References:
         https://github.com/megvii-research/NAFNet
@@ -2103,10 +2103,13 @@ class SimpleGate(nn.Module):
 class NAFBlock(nn.Module):
     """Nonlinear Activation Free Block with SimpleGate and Simplified Channel Attention.
 
-    This block from NAFNet replaces traditional nonlinear activation functions with SimpleGate for
-    image restoration tasks. It uses LayerNorm, depthwise convolutions, SimpleGate activation, and
-    Simplified Channel Attention (SCA) to achieve effective feature transformation without
-    conventional activations.
+    This block from NAFNet replaces traditional nonlinear activation functions with SimpleGate for image restoration
+    tasks. It uses LayerNorm, depthwise convolutions, SimpleGate activation, and Simplified Channel Attention (SCA) to
+    achieve effective feature transformation without conventional activations.
+
+    Args:
+        c (int): Input/output channels.
+        dw_expand (int): Channel expansion factor for the depthwise convolution branch.
 
     Attributes:
         conv1 (nn.Conv2d): 1x1 convolution to expand channels.
@@ -2116,10 +2119,6 @@ class NAFBlock(nn.Module):
         sca (nn.Sequential): Simplified Channel Attention module.
         norm (LayerNorm2d): Layer normalization for 2D features.
         beta (nn.Parameter): Learnable scaling parameter for residual connection.
-
-    Args:
-        c (int): Input/output channels.
-        dw_expand (int): Channel expansion factor for the depthwise convolution branch.
     """
 
     def __init__(self, c, dw_expand=2):
@@ -2164,20 +2163,20 @@ class NAFBlock(nn.Module):
 class NAFNet(nn.Module):
     """NAFNet-based lightweight image denoising module for YOLO backbone preprocessing.
 
-    A compact denoising module that uses NAFBlocks with SimpleGate activation and global residual
-    learning (output = input - learned_noise). Designed to be inserted as the first component in
-    YOLO backbones for preprocessing noisy input images.
-
-    Attributes:
-        embed (nn.Conv2d): Input embedding convolution.
-        blocks (nn.Sequential): Stack of NAFBlocks for feature transformation.
-        recover (nn.Conv2d): Output recovery convolution.
+    A compact denoising module that uses NAFBlocks with SimpleGate activation and global residual learning (output =
+    input - learned_noise). Designed to be inserted as the first component in YOLO backbones for preprocessing noisy
+    input images.
 
     Args:
         c1 (int): Input channels.
         c2 (int): Output channels.
         mid_channels (int): Internal feature channels for NAFBlocks.
         num_blocks (int): Number of NAFBlocks in the stack.
+
+    Attributes:
+        embed (nn.Conv2d): Input embedding convolution.
+        blocks (nn.Sequential): Stack of NAFBlocks for feature transformation.
+        recover (nn.Conv2d): Output recovery convolution.
     """
 
     def __init__(self, c1, c2, mid_channels=16, num_blocks=2):

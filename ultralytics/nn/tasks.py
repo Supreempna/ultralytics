@@ -55,7 +55,6 @@ from ultralytics.nn.modules import (
     ImagePoolingAttn,
     Index,
     LRPCHead,
-    NAFNet,
     Pose,
     Pose26,
     RepC3,
