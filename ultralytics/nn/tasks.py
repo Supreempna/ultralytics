@@ -56,6 +56,7 @@ from ultralytics.nn.modules import (
     Index,
     LRPCHead,
     NAFNet,
+    NAFNetFull,
     Pose,
     Pose26,
     RepC3,
@@ -68,6 +69,7 @@ from ultralytics.nn.modules import (
     Segment,
     Segment26,
     SemanticSegment,
+    SpeckleNoise,
     TorchVision,
     WorldDetect,
     YOLOEDetect,
@@ -1767,6 +1769,11 @@ def parse_model(d, ch, verbose=True):
                 legacy = False
         elif m is AIFI:
             args = [ch[f], *args]
+        elif m in frozenset({NAFNet, NAFNetFull, SpeckleNoise}):
+            # Pass-through preprocessing modules: inject c1 from incoming layer,
+            # c2 from YAML args, NO width scaling (output channels must match input).
+            c1, c2 = ch[f], args[0]
+            args = [c1, c2, *args[1:]]
         elif m in frozenset({HGStem, HGBlock}):
             c1, cm, c2 = ch[f], args[0], args[1]
             args = [c1, cm, c2, *args[2:]]

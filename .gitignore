@@ -156,4 +156,22 @@ wandb/
 # CI test asset cache
 .ultralytics_cache/
 
-# Unnecessinary data
+# Model weights and exported formats
+*.pt
+*.pth
+*.onnx
+*.engine
+*.tflite
+*.mlmodel
+*.mlpackage
+*.torchscript
+
+# Generated media and reports
+*.npy
+*.npz
+*.html
+*.tiff
+
+# Training artifacts
+*.pdf
+test_images/

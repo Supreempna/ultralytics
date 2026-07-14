@@ -16,7 +16,7 @@ scales: # model compound scaling constants, i.e. 'model=yolo26n-NAFNet.yaml' wil
 # YOLO26n-NAFNet backbone (NAFNet denoising + standard YOLO26 backbone)
 backbone:
   # [from, repeats, module, args]
-  - [-1, 1, NAFNet, [3, 3, 16, 2]] # 0-NAFNet denoising: input 3ch, 16 hidden, 2 NAFBlocks
+  - [-1, 1, NAFNet, [3, 16, 2]] # 0-NAFNet denoising: c2=3, 16 hidden ch, 2 NAFBlocks
   - [-1, 1, Conv, [64, 3, 2]] # 1-P1/2
   - [-1, 1, Conv, [128, 3, 2]] # 2-P2/4
   - [-1, 2, C3k2, [256, False, 0.25]]

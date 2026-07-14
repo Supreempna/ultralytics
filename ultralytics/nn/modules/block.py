@@ -52,9 +52,12 @@ __all__ = (
     "ResNetLayer",
     "SCDown",
     "SimpleGate",
+    "SpeckleNoise",
     "TorchVision",
     "NAFBlock",
+    "NAFBlockFull",
     "NAFNet",
+    "NAFNetFull",
 )
 
 
@@ -2208,3 +2211,226 @@ class NAFNet(nn.Module):
         feat = self.blocks(feat)
         out = self.recover(feat)
         return identity - out
+
+
+class NAFBlockFull(nn.Module):
+    """Full NAFBlock with Token Mixing + Channel Mixing (FFN) — matches the original paper.
+
+    Unlike the simplified NAFBlock (Token Mixing only), this implementation includes both
+    residual sub-blocks in series, identical to the original NAFNet architecture:
+        Token Mixing (SCA inside) → Channel Mixing / FFN
+
+    Each sub-block uses SimpleGate for nonlinearity instead of ReLU/GELU.
+
+    Attributes:
+        conv1-conv3: Token Mixing branch (1×1 expand → DW 3×3 → SG → SCA → 1×1 project).
+        conv4-conv5: FFN branch (1×1 expand → SG → 1×1 project, no DWConv).
+        sca: Simplified Channel Attention.
+        sg: SimpleGate activation.
+        norm1, norm2: LayerNorm2d for each sub-block.
+        dropout1, dropout2: Dropout after each sub-block.
+        beta, gamma: Learnable residual scaling parameters.
+
+    Args:
+        c: Input/output channels.
+        DW_Expand: Expansion factor for Token Mixing depthwise conv branch.
+        FFN_Expand: Expansion factor for FFN branch.
+        drop_out_rate: Dropout rate (0 = no dropout).
+    """
+
+    def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.0):
+        """Initialize full NAFBlock with Token Mixing + FFN.
+
+        Args:
+            c (int): Number of input/output channels.
+            DW_Expand (int): Channel expansion factor for Token Mixing branch.
+            FFN_Expand (int): Channel expansion factor for FFN branch.
+            drop_out_rate (float): Dropout probability (0 = disabled).
+        """
+        super().__init__()
+        dw_channel = c * DW_Expand
+        self.conv1 = nn.Conv2d(c, dw_channel, 1)
+        self.conv2 = nn.Conv2d(dw_channel, dw_channel, 3, 1, 1, groups=dw_channel)  # DWConv
+        self.conv3 = nn.Conv2d(dw_channel // 2, c, 1)
+        self.sg = SimpleGate()
+        self.sca = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),
+            nn.Conv2d(dw_channel // 2, dw_channel // 2, 1),
+        )
+
+        ffn_channel = FFN_Expand * c
+        self.conv4 = nn.Conv2d(c, ffn_channel, 1)
+        self.conv5 = nn.Conv2d(ffn_channel // 2, c, 1)
+
+        self.norm1 = LayerNorm2d(c)
+        self.norm2 = LayerNorm2d(c)
+
+        self.dropout1 = nn.Dropout(drop_out_rate) if drop_out_rate > 0.0 else nn.Identity()
+        self.dropout2 = nn.Dropout(drop_out_rate) if drop_out_rate > 0.0 else nn.Identity()
+
+        self.beta = nn.Parameter(torch.zeros((1, c, 1, 1)))
+        self.gamma = nn.Parameter(torch.zeros((1, c, 1, 1)))
+
+    def forward(self, inp):
+        """Forward pass: Token Mixing → FFN, each with learnable residual scaling.
+
+        Args:
+            inp (torch.Tensor): Input tensor of shape (B, C, H, W).
+
+        Returns:
+            (torch.Tensor): Output tensor of shape (B, C, H, W).
+        """
+        x = inp
+        # ── ① Token Mixing ──
+        x = self.norm1(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.sg(x)
+        x = x * self.sca(x)
+        x = self.conv3(x)
+        x = self.dropout1(x)
+        y = inp + x * self.beta
+
+        # ── ② Channel Mixing / FFN ──
+        x = self.conv4(self.norm2(y))
+        x = self.sg(x)
+        x = self.conv5(x)
+        x = self.dropout2(x)
+        return y + x * self.gamma
+
+
+class NAFNetFull(nn.Module):
+    """NAFNet variant using full NAFBlockFull (Token Mixing + FFN) for YOLO preprocessing.
+
+    Same wrapper as NAFNet but uses NAFBlockFull internally, which includes both the Token
+    Mixing and Channel Mixing (FFN) sub-blocks from the original NAFNet paper. This enables
+    comparison experiments between simplified (NAFBlock) and full (NAFBlockFull) block designs.
+
+    Attributes:
+        embed (nn.Conv2d): Input embedding convolution (3→mid_channels).
+        blocks (nn.Sequential): Stack of NAFBlockFull instances.
+        recover (nn.Conv2d): Output recovery convolution (mid_channels→3).
+
+    Args:
+        c1: Input channels.
+        c2: Output channels.
+        mid_channels: Internal feature channels.
+        num_blocks: Number of NAFBlockFull instances.
+    """
+
+    def __init__(self, c1, c2, mid_channels=16, num_blocks=2):
+        """Initialize NAFNetFull.
+
+        Args:
+            c1 (int): Number of input channels.
+            c2 (int): Number of output channels.
+            mid_channels (int): Hidden channels for NAFBlockFull stack.
+            num_blocks (int): Number of NAFBlockFull blocks.
+        """
+        super().__init__()
+        self.embed = nn.Conv2d(c1, mid_channels, 3, 1, 1)
+        self.blocks = nn.Sequential(*(NAFBlockFull(mid_channels) for _ in range(num_blocks)))
+        self.recover = nn.Conv2d(mid_channels, c2, 3, 1, 1)
+
+    def forward(self, x):
+        """Forward pass with global residual learning.
+
+        Args:
+            x (torch.Tensor): Input tensor of shape (B, C, H, W).
+
+        Returns:
+            (torch.Tensor): Denoised output tensor of shape (B, C, H, W).
+        """
+        identity = x
+        feat = self.embed(x)
+        feat = self.blocks(feat)
+        out = self.recover(feat)
+        return identity - out
+
+
+class SpeckleNoise(nn.Module):
+    """Speckle noise generator for sonar image degradation simulation.
+
+    Implements the multiplicative speckle noise model from forward-looking sonar (FLS):
+        Inoise = Iclean * N                     (multiplicative only)
+        Inoise = Iclean * N + G                 (with additive extension)
+    where N ~ Gamma(L, 1/L) with unit mean E[N]=1 and variance Var[N]=1/L,
+    and G ~ N(0, sigma^2) is optional additive Gaussian noise.
+
+    The Gamma-distributed noise N is randomly sampled independently for each forward pass
+    during training. During evaluation (model.eval()), the module acts as a pass-through,
+    outputting the clean input unchanged. This design enables seamless integration as a
+    data-augmentation layer: train with synthetic degradation, evaluate on clean or naturally
+    noisy inputs.
+
+    The module is fully end-to-end compatible with YOLO YAML model definitions via parse_model.
+
+    Attributes:
+        L (float): Number of looks (L >= 1). Lower L produces stronger multiplicative noise.
+        additive (bool): Whether to add additive Gaussian noise on top of speckle noise.
+        additive_sigma (float): Standard deviation of the additive Gaussian noise component.
+
+    Args:
+        c1 (int): Input channels.
+        c2 (int): Output channels (typically equal to c1).
+        L (float): Number of looks, controlling speckle noise strength. Lower = stronger.
+        additive (bool): Enable additive Gaussian noise.
+        additive_sigma (float): Std deviation of Gaussian noise.
+
+    References:
+        [42] G. D. Young and N. S. Subotic, "Maximum likelihood estimation of the
+        Nakagami distribution," IEEE Trans. Signal Process., 2004.
+        [44] P. C. Etter, Underwater Acoustic Modeling and Simulation, 4th ed. CRC Press, 2013.
+    """
+
+    def __init__(self, c1, c2, L=1.0, additive=False, additive_sigma=0.02):
+        """Initialize SpeckleNoise with degradation parameters.
+
+        Args:
+            c1 (int): Number of input channels.
+            c2 (int): Number of output channels (usually equal to c1).
+            L (float): Number of looks for Gamma distribution (>= 1).
+            additive (bool): Whether to add Gaussian noise.
+            additive_sigma (float): Standard deviation of additive Gaussian noise.
+        """
+        super().__init__()
+        self.L = max(L, 0.1)  # prevent degenerate concentration < 0.1
+        self.additive = additive
+        self.additive_sigma = additive_sigma
+
+    def forward(self, x):
+        """Apply speckle degradation: Inoise = Iclean * N (+ optional additive G).
+
+        During training, randomly generates Gamma-distributed multiplicative noise N and
+        (optionally) Gaussian additive noise G. During evaluation, returns input unchanged.
+
+        Args:
+            x (torch.Tensor): Clean input tensor of shape (B, C, H, W).
+
+        Returns:
+            (torch.Tensor): Degraded output tensor of same shape (B, C, H, W).
+        """
+        if not self.training:
+            return x
+
+        # Multiplicative Gamma noise: N ~ Gamma(L, 1/L), E[N]=1, Var[N]=1/L
+        # Use PyTorch distributions for correctness
+        gamma_dist = torch.distributions.Gamma(
+            concentration=torch.tensor(self.L, device=x.device, dtype=x.dtype),
+            rate=torch.tensor(self.L, device=x.device, dtype=x.dtype),
+        )
+        noise = gamma_dist.sample(x.shape)  # independent noise per pixel
+
+        # Detach noise — gradients should only flow through the clean signal path
+        out = x * noise.detach()
+
+        # Optional additive Gaussian noise: G ~ N(0, sigma^2)
+        if self.additive:
+            gaussian = torch.randn_like(x) * self.additive_sigma
+            out = out + gaussian
+
+        return out
+
+    def extra_repr(self):
+        """Return a string with extra representation information."""
+        return f"L={self.L}, additive={self.additive}, additive_sigma={self.additive_sigma}"
