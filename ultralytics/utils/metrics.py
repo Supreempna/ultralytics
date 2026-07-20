@@ -129,10 +129,10 @@ def bbox_iou(
         DIoU (bool, optional): If True, calculate Distance IoU.
         CIoU (bool, optional): If True, calculate Complete IoU.
         MPDIoU (bool, optional): If True, calculate MPDIoU (IoU minus corner-point distances).
-        EIoU (bool, optional): If True, calculate Efficient IoU (IoU minus center distance, width, and height
-            penalties separately). Good for small objects — avoids CIoU's unstable aspect-ratio term.
-        WIoU (bool, optional): If True, calculate Wise-IoU v1. Multiplicative center-distance attention —
-            exponentially amplifies loss for distant anchors. Strong for small objects.
+        EIoU (bool, optional): If True, calculate Efficient IoU (IoU minus center distance, width, and height penalties
+            separately). Good for small objects — avoids CIoU's unstable aspect-ratio term.
+        WIoU (bool, optional): If True, calculate Wise-IoU v1. Multiplicative center-distance attention — exponentially
+            amplifies loss for distant anchors. Strong for small objects.
         eps (float, optional): A small value to avoid division by zero.
 
     Returns:
@@ -193,12 +193,12 @@ def bbox_iou(
         # More stable for small objects where w/h ratio is noisy.
         cw = b1_x2.maximum(b2_x2) - b1_x1.minimum(b2_x1)  # convex hull width
         ch = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)  # convex hull height
-        c2 = cw.pow(2) + ch.pow(2) + eps                     # convex diagonal squared
-        rho2 = (                                           # center distance squared
+        c2 = cw.pow(2) + ch.pow(2) + eps  # convex diagonal squared
+        rho2 = (  # center distance squared
             (b2_x1 + b2_x2 - b1_x1 - b1_x2).pow(2) + (b2_y1 + b2_y2 - b1_y1 - b1_y2).pow(2)
         ) / 4
-        rho_w2 = (w1 - w2).pow(2)                           # width difference squared
-        rho_h2 = (h1 - h2).pow(2)                           # height difference squared
+        rho_w2 = (w1 - w2).pow(2)  # width difference squared
+        rho_h2 = (h1 - h2).pow(2)  # height difference squared
         return iou - rho2 / c2 - rho_w2 / cw.pow(2) - rho_h2 / ch.pow(2)  # EIoU
     elif WIoU:
         # WIoU v1: Wise-IoU (Tong et al., arXiv 2301.10051)
@@ -210,7 +210,7 @@ def bbox_iou(
         ch = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)  # convex hull height
         # Detach convex diagonal: acts as constant scaling, attention focuses on rho2 alone
         c2 = cw.pow(2).detach() + ch.pow(2).detach() + eps
-        rho2 = (                                            # center distance squared
+        rho2 = (  # center distance squared
             (b2_x1 + b2_x2 - b1_x1 - b1_x2).pow(2) + (b2_y1 + b2_y2 - b1_y1 - b1_y2).pow(2)
         ) / 4
         return iou * torch.exp(-rho2 / c2)  # WIoU v1
