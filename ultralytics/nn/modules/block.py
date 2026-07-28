@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
@@ -45,6 +45,10 @@ __all__ = (
     "HGBlock",
     "HGStem",
     "ImagePoolingAttn",
+    "NAFBlock",
+    "NAFBlockFull",
+    "NAFNet",
+    "NAFNetFull",
     "Proto",
     "RepC3",
     "RepNCSPELAN4",
@@ -54,10 +58,6 @@ __all__ = (
     "SimpleGate",
     "SpeckleNoise",
     "TorchVision",
-    "NAFBlock",
-    "NAFBlockFull",
-    "NAFNet",
-    "NAFNetFull",
 )
 
 
@@ -2082,9 +2082,9 @@ class RealNVP(nn.Module):
 class SimpleGate(nn.Module):
     """SimpleGate activation: split channels in half and multiply element-wise.
 
-    Implements the nonlinearity-free activation mechanism from NAFNet (Nonlinear Activation Free Network).
-    Replaces traditional activation functions like ReLU/GELU with a simple channel-splitting and
-    element-wise multiplication operation.
+    Implements the nonlinearity-free activation mechanism from NAFNet (Nonlinear Activation Free Network). Replaces
+    traditional activation functions like ReLU/GELU with a simple channel-splitting and element-wise multiplication
+    operation.
 
     References:
         https://github.com/megvii-research/NAFNet
@@ -2106,10 +2106,13 @@ class SimpleGate(nn.Module):
 class NAFBlock(nn.Module):
     """Nonlinear Activation Free Block with SimpleGate and Simplified Channel Attention.
 
-    This block from NAFNet replaces traditional nonlinear activation functions with SimpleGate for
-    image restoration tasks. It uses LayerNorm, depthwise convolutions, SimpleGate activation, and
-    Simplified Channel Attention (SCA) to achieve effective feature transformation without
-    conventional activations.
+    This block from NAFNet replaces traditional nonlinear activation functions with SimpleGate for image restoration
+    tasks. It uses LayerNorm, depthwise convolutions, SimpleGate activation, and Simplified Channel Attention (SCA) to
+    achieve effective feature transformation without conventional activations.
+
+    Args:
+        c (int): Input/output channels.
+        dw_expand (int): Channel expansion factor for the depthwise convolution branch.
 
     Attributes:
         conv1 (nn.Conv2d): 1x1 convolution to expand channels.
@@ -2119,10 +2122,6 @@ class NAFBlock(nn.Module):
         sca (nn.Sequential): Simplified Channel Attention module.
         norm (LayerNorm2d): Layer normalization for 2D features.
         beta (nn.Parameter): Learnable scaling parameter for residual connection.
-
-    Args:
-        c (int): Input/output channels.
-        dw_expand (int): Channel expansion factor for the depthwise convolution branch.
     """
 
     def __init__(self, c, dw_expand=2):
@@ -2167,20 +2166,20 @@ class NAFBlock(nn.Module):
 class NAFNet(nn.Module):
     """NAFNet-based lightweight image denoising module for YOLO backbone preprocessing.
 
-    A compact denoising module that uses NAFBlocks with SimpleGate activation and global residual
-    learning (output = input - learned_noise). Designed to be inserted as the first component in
-    YOLO backbones for preprocessing noisy input images.
-
-    Attributes:
-        embed (nn.Conv2d): Input embedding convolution.
-        blocks (nn.Sequential): Stack of NAFBlocks for feature transformation.
-        recover (nn.Conv2d): Output recovery convolution.
+    A compact denoising module that uses NAFBlocks with SimpleGate activation and global residual learning (output =
+    input - learned_noise). Designed to be inserted as the first component in YOLO backbones for preprocessing noisy
+    input images.
 
     Args:
         c1 (int): Input channels.
         c2 (int): Output channels.
         mid_channels (int): Internal feature channels for NAFBlocks.
         num_blocks (int): Number of NAFBlocks in the stack.
+
+    Attributes:
+        embed (nn.Conv2d): Input embedding convolution.
+        blocks (nn.Sequential): Stack of NAFBlocks for feature transformation.
+        recover (nn.Conv2d): Output recovery convolution.
     """
 
     def __init__(self, c1, c2, mid_channels=16, num_blocks=2):
@@ -2216,11 +2215,17 @@ class NAFNet(nn.Module):
 class NAFBlockFull(nn.Module):
     """Full NAFBlock with Token Mixing + Channel Mixing (FFN) — matches the original paper.
 
-    Unlike the simplified NAFBlock (Token Mixing only), this implementation includes both
-    residual sub-blocks in series, identical to the original NAFNet architecture:
+    Unlike the simplified NAFBlock (Token Mixing only), this implementation includes both residual sub-blocks in series,
+    identical to the original NAFNet architecture:
         Token Mixing (SCA inside) → Channel Mixing / FFN
 
     Each sub-block uses SimpleGate for nonlinearity instead of ReLU/GELU.
+
+    Args:
+        c: Input/output channels.
+        DW_Expand: Expansion factor for Token Mixing depthwise conv branch.
+        FFN_Expand: Expansion factor for FFN branch.
+        drop_out_rate: Dropout rate (0 = no dropout).
 
     Attributes:
         conv1-conv3: Token Mixing branch (1×1 expand → DW 3×3 → SG → SCA → 1×1 project).
@@ -2230,12 +2235,6 @@ class NAFBlockFull(nn.Module):
         norm1, norm2: LayerNorm2d for each sub-block.
         dropout1, dropout2: Dropout after each sub-block.
         beta, gamma: Learnable residual scaling parameters.
-
-    Args:
-        c: Input/output channels.
-        DW_Expand: Expansion factor for Token Mixing depthwise conv branch.
-        FFN_Expand: Expansion factor for FFN branch.
-        drop_out_rate: Dropout rate (0 = no dropout).
     """
 
     def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.0):
@@ -2302,20 +2301,20 @@ class NAFBlockFull(nn.Module):
 class NAFNetFull(nn.Module):
     """NAFNet variant using full NAFBlockFull (Token Mixing + FFN) for YOLO preprocessing.
 
-    Same wrapper as NAFNet but uses NAFBlockFull internally, which includes both the Token
-    Mixing and Channel Mixing (FFN) sub-blocks from the original NAFNet paper. This enables
-    comparison experiments between simplified (NAFBlock) and full (NAFBlockFull) block designs.
-
-    Attributes:
-        embed (nn.Conv2d): Input embedding convolution (3→mid_channels).
-        blocks (nn.Sequential): Stack of NAFBlockFull instances.
-        recover (nn.Conv2d): Output recovery convolution (mid_channels→3).
+    Same wrapper as NAFNet but uses NAFBlockFull internally, which includes both the Token Mixing and Channel Mixing
+    (FFN) sub-blocks from the original NAFNet paper. This enables comparison experiments between simplified (NAFBlock)
+    and full (NAFBlockFull) block designs.
 
     Args:
         c1: Input channels.
         c2: Output channels.
         mid_channels: Internal feature channels.
         num_blocks: Number of NAFBlockFull instances.
+
+    Attributes:
+        embed (nn.Conv2d): Input embedding convolution (3→mid_channels).
+        blocks (nn.Sequential): Stack of NAFBlockFull instances.
+        recover (nn.Conv2d): Output recovery convolution (mid_channels→3).
     """
 
     def __init__(self, c1, c2, mid_channels=16, num_blocks=2):
@@ -2354,21 +2353,15 @@ class SpeckleNoise(nn.Module):
     Implements the multiplicative speckle noise model from forward-looking sonar (FLS):
         Inoise = Iclean * N                     (multiplicative only)
         Inoise = Iclean * N + G                 (with additive extension)
-    where N ~ Gamma(L, 1/L) with unit mean E[N]=1 and variance Var[N]=1/L,
-    and G ~ N(0, sigma^2) is optional additive Gaussian noise.
+    where N ~ Gamma(L, 1/L) with unit mean E[N]=1 and variance Var[N]=1/L, and G ~ N(0, sigma^2) is optional additive
+    Gaussian noise.
 
-    The Gamma-distributed noise N is randomly sampled independently for each forward pass
-    during training. During evaluation (model.eval()), the module acts as a pass-through,
-    outputting the clean input unchanged. This design enables seamless integration as a
-    data-augmentation layer: train with synthetic degradation, evaluate on clean or naturally
-    noisy inputs.
+    The Gamma-distributed noise N is randomly sampled independently for each forward pass during training. During
+    evaluation (model.eval()), the module acts as a pass-through, outputting the clean input unchanged. This design
+    enables seamless integration as a data-augmentation layer: train with synthetic degradation, evaluate on clean or
+    naturally noisy inputs.
 
     The module is fully end-to-end compatible with YOLO YAML model definitions via parse_model.
-
-    Attributes:
-        L (float): Number of looks (L >= 1). Lower L produces stronger multiplicative noise.
-        additive (bool): Whether to add additive Gaussian noise on top of speckle noise.
-        additive_sigma (float): Standard deviation of the additive Gaussian noise component.
 
     Args:
         c1 (int): Input channels.
@@ -2376,6 +2369,11 @@ class SpeckleNoise(nn.Module):
         L (float): Number of looks, controlling speckle noise strength. Lower = stronger.
         additive (bool): Enable additive Gaussian noise.
         additive_sigma (float): Std deviation of Gaussian noise.
+
+    Attributes:
+        L (float): Number of looks (L >= 1). Lower L produces stronger multiplicative noise.
+        additive (bool): Whether to add additive Gaussian noise on top of speckle noise.
+        additive_sigma (float): Standard deviation of the additive Gaussian noise component.
 
     References:
         [42] G. D. Young and N. S. Subotic, "Maximum likelihood estimation of the
