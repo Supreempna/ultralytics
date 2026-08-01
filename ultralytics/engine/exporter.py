@@ -388,7 +388,7 @@ def try_export(inner_func):
             return f
         except Exception as e:
             LOGGER.error(f"{prefix} export failure {dt.t:.1f}s: {e}")
-            raise e
+            raise
 
     return outer_func
 
@@ -458,7 +458,7 @@ class Exporter:
         if (
             self.args.format.lower() == "rknn"
             and not self.args.int8
-            and not any(k in (overrides or {}) for k in {"half", "int8", "data", "fraction"})
+            and not any(k in (overrides or {}) for k in ("half", "int8", "data", "fraction"))
         ):
             self.args.half = True
         self.callbacks = _callbacks or callbacks.get_default_callbacks()
@@ -1421,7 +1421,7 @@ class NMSModel(torch.nn.Module):
 
         preds = self.model(x)
         pred = preds[0] if isinstance(preds, tuple) else preds
-        kwargs = dict(device=pred.device, dtype=pred.dtype)
+        kwargs = {"device": pred.device, "dtype": pred.dtype}
         bs = pred.shape[0]
         pred = pred.transpose(-1, -2)  # shape(1,84,6300) to shape(1,6300,84)
         extra_shape = pred.shape[-1] - (4 + len(self.model.names))  # extras from Segment, OBB, Pose
