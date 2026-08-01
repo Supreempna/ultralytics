@@ -7,8 +7,8 @@ from pathlib import Path
 from typing import Any
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 from ultralytics.utils.metrics import CITYSCAPES_WEIGHT, OKS_SIGMA, RLE_WEIGHT
 from ultralytics.utils.ops import crop_mask, xywh2xyxy, xyxy2xywh
@@ -113,9 +113,16 @@ class BboxLoss(nn.Module):
     Supports WIoU v3, Inner-IoU, and Alpha-IoU.
     """
 
-    def __init__(self, reg_max: int = 16, wiou: bool = False, wiou_momentum: float = 0.99,
-                 wiou_alpha: float = 1.9, wiou_delta: float = 1.0, inner_ratio: float = 0.0,
-                 alpha_iou: float = 1.0):
+    def __init__(
+        self,
+        reg_max: int = 16,
+        wiou: bool = False,
+        wiou_momentum: float = 0.99,
+        wiou_alpha: float = 1.9,
+        wiou_delta: float = 1.0,
+        inner_ratio: float = 0.0,
+        alpha_iou: float = 1.0,
+    ):
         """Initialize the BboxLoss module with regularization maximum and DFL settings.
 
         Args:
@@ -124,12 +131,12 @@ class BboxLoss(nn.Module):
             wiou_momentum (float): Momentum for running mean of IoU loss in WIoU v3.
             wiou_alpha (float): WIoU v3 attention exponent base.
             wiou_delta (float): WIoU v3 attention inflection point.
-            inner_ratio (float): If > 0, use Inner-IoU: scale boxes toward center by this ratio
-                before computing IoU. 0.7–0.8 recommended for small objects (<0.1 image size).
-                Reduces boundary noise, focuses on reliable center region. 0.0 = disabled.
-            alpha_iou (float): Alpha-IoU power exponent (≥ 1.0). >1 shifts gradient focus
-                toward high-IoU matches — helps late-stage refinement in short training.
-                1.0 = standard loss (disabled). 3.0 is common in literature.
+            inner_ratio (float): If > 0, use Inner-IoU: scale boxes toward center by this ratio before computing IoU.
+                0.7–0.8 recommended for small objects (<0.1 image size). Reduces boundary noise, focuses on reliable
+                center region. 0.0 = disabled.
+            alpha_iou (float): Alpha-IoU power exponent (≥ 1.0). >1 shifts gradient focus toward high-IoU matches —
+                helps late-stage refinement in short training. 1.0 = standard loss (disabled). 3.0 is common
+                in literature.
         """
         super().__init__()
         self.dfl_loss = DFLoss(reg_max) if reg_max > 1 else None
@@ -137,9 +144,9 @@ class BboxLoss(nn.Module):
         self.inner_ratio = inner_ratio
         self.alpha_iou = alpha_iou
         if wiou:
-            self.register_buffer('wiou_iou_mean', torch.tensor(1.0))
-            self.register_buffer('wiou_alpha', torch.tensor(wiou_alpha, dtype=torch.float32))
-            self.register_buffer('wiou_delta', torch.tensor(wiou_delta, dtype=torch.float32))
+            self.register_buffer("wiou_iou_mean", torch.tensor(1.0))
+            self.register_buffer("wiou_alpha", torch.tensor(wiou_alpha, dtype=torch.float32))
+            self.register_buffer("wiou_delta", torch.tensor(wiou_delta, dtype=torch.float32))
             self.wiou_momentum = wiou_momentum
         else:
             self.wiou_alpha = wiou_alpha
@@ -193,19 +200,21 @@ class BboxLoss(nn.Module):
             # --- WIoU v1 gate: center-distance attention ---
             b1_x1, b1_y1, b1_x2, b1_y2 = pred_boxes.chunk(4, -1)
             b2_x1, b2_y1, b2_x2, b2_y2 = target_boxes.chunk(4, -1)
-            cw = b1_x2.maximum(b2_x2) - b1_x1.minimum(b2_x1)      # convex hull width
-            ch = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)      # convex hull height
-            c2 = cw.pow(2).detach() + ch.pow(2).detach() + eps     # detach: constant scaling
-            rho2 = ((b2_x1 + b2_x2 - b1_x1 - b1_x2).pow(2) +
-                    (b2_y1 + b2_y2 - b1_y1 - b1_y2).pow(2)) / 4    # center distance²
-            iou = iou_raw * torch.exp(-rho2 / c2)                  # WIoU v1 score
+            cw = b1_x2.maximum(b2_x2) - b1_x1.minimum(b2_x1)  # convex hull width
+            ch = b1_y2.maximum(b2_y2) - b1_y1.minimum(b2_y1)  # convex hull height
+            c2 = cw.pow(2).detach() + ch.pow(2).detach() + eps  # detach: constant scaling
+            rho2 = (
+                (b2_x1 + b2_x2 - b1_x1 - b1_x2).pow(2) + (b2_y1 + b2_y2 - b1_y1 - b1_y2).pow(2)
+            ) / 4  # center distance²
+            iou = iou_raw * torch.exp(-rho2 / c2)  # WIoU v1 score
 
             # --- WIoU v3: outlier-degree attention ---
             with torch.no_grad():
                 if self.training:
                     iou_loss_batch = (1.0 - iou_raw).mean()
-                    self.wiou_iou_mean = (self.wiou_momentum * self.wiou_iou_mean +
-                                          (1.0 - self.wiou_momentum) * iou_loss_batch)
+                    self.wiou_iou_mean = (
+                        self.wiou_momentum * self.wiou_iou_mean + (1.0 - self.wiou_momentum) * iou_loss_batch
+                    )
                 # β = outlier degree: >1 means this anchor is harder than average
                 beta = (1.0 - iou_raw) / (self.wiou_iou_mean + eps)
                 # r = attention factor: peaks at medium-quality, suppresses extremes
