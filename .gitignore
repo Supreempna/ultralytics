@@ -175,3 +175,6 @@ wandb/
 # Training artifacts
 *.pdf
 test_images/
+
+# impove docs and examples
+readme-improve.md

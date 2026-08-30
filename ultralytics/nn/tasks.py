@@ -83,6 +83,7 @@ from ultralytics.utils.loss import (
     E2ELoss,
     PoseLoss26,
     SemanticSegmentationLoss,
+    noise_consistency_loss,
     v8ClassificationLoss,
     v8DetectionLoss,
     v8OBBLoss,
@@ -402,6 +403,7 @@ class DetectionModel(BaseModel):
         """
         super().__init__()
         _initialize_yolo_model(self, cfg, ch, nc, verbose)
+        self._setup_noise_pipeline()
 
         # Build strides
         m = self.model[-1]  # Detect()
@@ -521,6 +523,76 @@ class DetectionModel(BaseModel):
     def init_criterion(self):
         """Initialize the loss criterion for the DetectionModel."""
         return E2ELoss(self) if getattr(self, "end2end", False) else v8DetectionLoss(self)
+
+    def _setup_noise_pipeline(self):
+        """Detect the SpeckleNoise → NAFNet preprocessing pipeline and capture its intermediate outputs.
+
+        Finds the first ``SpeckleNoise`` module (synthetic noise generator) and the first ``NAFNet``/``NAFNetFull``
+        module (denoiser), then installs forward hooks so the noisy image (SpeckleNoise output) and denoised image
+        (NAFNet output) are available for the auxiliary noise-residual consistency loss.
+        """
+        noise_idx = denoise_idx = None
+        for i, m in enumerate(self.model):
+            if noise_idx is None and isinstance(m, SpeckleNoise):
+                noise_idx = i
+            if denoise_idx is None and isinstance(m, (NAFNet, NAFNetFull)):
+                denoise_idx = i
+        self._noise_idx = noise_idx
+        self._denoise_idx = denoise_idx
+        self._has_noise_pipeline = noise_idx is not None and denoise_idx is not None
+        self._noise_refs = {}
+        if self._has_noise_pipeline:
+            self.model[noise_idx].register_forward_hook(self._capture_noisy)
+            self.model[denoise_idx].register_forward_hook(self._capture_denoised)
+
+    def _capture_noisy(self, module, input, output):
+        """Forward hook storing the SpeckleNoise output (synthetic noisy image)."""
+        self._noise_refs["noisy"] = output
+
+    def _capture_denoised(self, module, input, output):
+        """Forward hook storing the NAFNet output (denoised image)."""
+        self._noise_refs["denoised"] = output
+
+    def _compute_noise_loss(self, batch):
+        """Compute the noise-residual consistency loss from the captured noisy and denoised tensors.
+
+        Args:
+            batch (dict): Training batch whose ``img`` tensor is the clean input before degradation.
+
+        Returns:
+            (torch.Tensor | None): Scalar noise loss, or None if the intermediate tensors were not captured.
+        """
+        noisy = self._noise_refs.get("noisy")
+        denoised = self._noise_refs.get("denoised")
+        if noisy is None or denoised is None:
+            return None
+        return noise_consistency_loss(noisy, denoised, batch["img"])
+
+    def loss(self, batch, preds=None):
+        """Compute the total training loss, appending the noise-residual consistency loss when applicable.
+
+        For models with a SpeckleNoise → NAFNet preprocessing pipeline, adds the Charbonnier noise-residual
+        consistency loss (weighted by ``noise_gain``) to the detection loss and appends it to ``loss_items`` for
+        logging. During evaluation, a zero placeholder keeps the loss-item shape consistent without adding any
+        gradient signal.
+        """
+        if getattr(self, "criterion", None) is None:
+            self.criterion = self.init_criterion()
+
+        if preds is None:
+            preds = self.forward(batch["img"])
+        loss, loss_items = self.criterion(preds, batch)
+
+        if self._has_noise_pipeline:
+            noise_loss = self._compute_noise_loss(batch) if self.training else None
+            if noise_loss is not None:
+                gain = float(getattr(getattr(self, "args", None), "noise_gain", 1.0))
+                loss = torch.cat((loss, (noise_loss * gain).reshape(1)))
+                noise_item = noise_loss.detach().reshape(1)
+            else:
+                noise_item = loss.new_zeros(1)
+            loss_items = torch.cat((loss_items, noise_item))
+        return loss, loss_items
 
 
 class OBBModel(DetectionModel):

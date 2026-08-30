@@ -19,6 +19,30 @@ from .metrics import bbox_iou, probiou
 from .tal import bbox2dist, rbox2dist
 
 
+def noise_consistency_loss(noisy, denoised, clean, eps=1e-3):
+    """Charbonnier noise-residual consistency loss for denoising supervision.
+
+    Compares the denoiser's estimated noise residual ``(noisy - denoised)`` against the
+    ground-truth injected noise ``(noisy - clean)``. Algebraically equivalent to
+    ``Charbonnier(denoised - clean)``, but written explicitly in residual form so that the
+    noise generator's output and the denoiser's output are compared directly.
+
+    Args:
+        noisy (torch.Tensor): Synthetic degraded image (SpeckleNoise output).
+        denoised (torch.Tensor): Denoised image (NAFNet output).
+        clean (torch.Tensor): Clean reference image (model input before degradation).
+        eps (float): Charbonnier robustness constant.
+
+    Returns:
+        (torch.Tensor): Scalar mean Charbonnier loss over all elements.
+    """
+    noisy = noisy.float()
+    denoised = denoised.float()
+    clean = clean.float()
+    residual = (noisy - denoised) - (noisy - clean)
+    return (residual.pow(2) + eps**2).sqrt().mean()
+
+
 class VarifocalLoss(nn.Module):
     """Varifocal loss by Zhang et al.
 
