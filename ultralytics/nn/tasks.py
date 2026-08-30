@@ -594,6 +594,22 @@ class DetectionModel(BaseModel):
             loss_items = torch.cat((loss_items, noise_item))
         return loss, loss_items
 
+    def __getstate__(self):
+        """Return the model state for deepcopy/pickle, excluding the transient forward-hook captures.
+
+        ``_noise_refs`` holds non-leaf intermediate tensors captured by the SpeckleNoise/NAFNet forward hooks.
+        Keeping them in the state would break ``copy.deepcopy`` (used by ``ModelEMA``) because non-leaf
+        tensors do not support deepcopy. They are re-created empty on restore.
+        """
+        state = super().__getstate__()
+        state.pop("_noise_refs", None)
+        return state
+
+    def __setstate__(self, state):
+        """Restore the model state and re-initialize the transient forward-hook capture dict."""
+        super().__setstate__(state)
+        self._noise_refs = {}
+
 
 class OBBModel(DetectionModel):
     """YOLO Oriented Bounding Box (OBB) model.
