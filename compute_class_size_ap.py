@@ -38,36 +38,45 @@ MEDIUM_AREA = 96**2
 MIN_RELIABLE = 10  # flag bins with fewer than this many GT instances
 
 
-def run_coco_eval(gt, preds, cat_ids):
+def load_coco(gt, preds):
+    """Write JSON once, load COCO objects, and return (anno, pred, eval_cls, is_faster)."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            gt_path = tmp / "gt.json"
+            pred_path = tmp / "pred.json"
+            gt_path.write_text(json.dumps(gt))
+            pred_path.write_text(json.dumps(preds))
+
+            try:
+                from faster_coco_eval import COCO, COCOeval_faster as COCOeval  # noqa: N813
+
+                anno = COCO(str(gt_path))
+                pred = anno.loadRes(str(pred_path))
+                is_faster = True
+            except ImportError:
+                from pycocotools.coco import COCO  # noqa: N813
+                from pycocotools.cocoeval import COCOeval
+
+                anno = COCO(str(gt_path))
+                pred = anno.loadRes(str(pred_path))
+                is_faster = False
+    return anno, pred, COCOeval, is_faster
+
+
+def run_coco_eval(anno, pred, eval_cls, is_faster, img_ids, cat_ids):
     """Run COCO evaluation restricted to ``cat_ids`` and return the stats list."""
-    with tempfile.TemporaryDirectory() as tmp:
-        tmp = Path(tmp)
-        gt_path = tmp / "gt.json"
-        pred_path = tmp / "pred.json"
-        gt_path.write_text(json.dumps(gt))
-        pred_path.write_text(json.dumps(preds))
-
-        try:
-            from faster_coco_eval import COCO, COCOeval_faster as COCOeval  # noqa: N813
-
-            anno = COCO(str(gt_path))
-            pred = anno.loadRes(str(pred_path))
-            val = COCOeval(anno, pred, iouType="bbox", print_function=lambda *a, **k: None)
-        except ImportError:
-            from pycocotools.coco import COCO  # noqa: N813
-            from pycocotools.cocoeval import COCOeval
-
-            anno = COCO(str(gt_path))
-            pred = anno.loadRes(str(pred_path))
-            val = COCOeval(anno, pred, iouType="bbox")
-
-        val.params.imgIds = [img["id"] for img in gt["images"]]
-        val.params.catIds = list(cat_ids)
+    if is_faster:
+        val = eval_cls(anno, pred, iouType="bbox", print_function=lambda *a, **k: None)
+    else:
+        val = eval_cls(anno, pred, iouType="bbox")
+    val.params.imgIds = list(img_ids)
+    val.params.catIds = list(cat_ids)
+    with contextlib.redirect_stdout(io.StringIO()):
         val.evaluate()
         val.accumulate()
-        with contextlib.redirect_stdout(io.StringIO()):
-            val.summarize()
-        return list(val.stats)
+        val.summarize()
+    return list(val.stats)
 
 
 def fmt_ap(value, count, min_reliable=MIN_RELIABLE):
@@ -108,8 +117,12 @@ def main():
     preds = collect_predictions(model, images, args.imgsz, args.conf, args.device)
     print(f"val images: {len(images)}, predictions: {len(preds)}, GT instances: {len(gt['annotations'])}")
 
+    # Load COCO objects once, then evaluate per category (silently)
+    anno, pred, eval_cls, is_faster = load_coco(gt, preds)
+    img_ids = [img["id"] for img in gt["images"]]
+
     # Overall row (all categories)
-    overall = run_coco_eval(gt, preds, list(range(1, nc + 1)))
+    overall = run_coco_eval(anno, pred, eval_cls, is_faster, img_ids, list(range(1, nc + 1)))
 
     header = (
         f"{'Class':<12} {'n':>5} {'AP':>8} {'AP50':>8} {'AP75':>8} "
@@ -130,7 +143,7 @@ def main():
         medium_n = sum(1 for a in anns if SMALL_AREA <= a["area"] < MEDIUM_AREA)
         large_n = sum(1 for a in anns if a["area"] >= MEDIUM_AREA)
 
-        stats = run_coco_eval(gt, preds, [cat_id])
+        stats = run_coco_eval(anno, pred, eval_cls, is_faster, img_ids, [cat_id])
         rows.append((name, n, stats, small_n, medium_n, large_n))
 
         ap_small = fmt_ap(stats[3], small_n)
