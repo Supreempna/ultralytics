@@ -12,6 +12,7 @@ reg_max: 1 # DFL bins
 scales: # model compound scaling constants, i.e. 'model=yolo26n-NAFNet.yaml' will call with scale 'n'
   # [depth, width, max_channels]
   n: [0.50, 0.25, 1024] # summary: 268 layers, ~2.6M parameters, ~6.2 GFLOPs
+  s: [0.50, 0.50, 1024] # summary: 260 layers, 10,009,784 parameters, 10,009,784 gradients, 22.8 GFLOPs
 
 # YOLO26n-NAFNet backbone (NAFNet denoising + standard YOLO26 backbone)
 backbone:
