@@ -75,8 +75,10 @@ def main():
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    model = YOLO(args.model).to(device)
-    nafnet = model.model[0]  # NAFNet is layer 0 in yolo26n-NAFNet.yaml
+    net = YOLO(args.model).model  # DetectionModel
+    net.to(device)
+    net.eval()
+    nafnet = net.model[0]  # NAFNet is layer 0: DetectionModel.model is the nn.Sequential
     nafnet.eval()
 
     images = list_images(args.source)[: args.num]

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # NAFNet 容量消融：顺序跑 3 个轻量配置（20 轮粗筛）
-# 每个配置输出到 runs/ablation/<name>/
+# 每个配置输出到 runs/detect/ablation/<name>/（project=ablation，ultralytics 自动加 runs/detect/ 前缀）
 set -e
 
 DATA=ultralytics/dataset/FLS_Detection_YOLO/FLSD.yaml
@@ -37,7 +37,7 @@ echo "=============================================================="
 echo "全部完成，汇总最终 mAP50-95："
 echo "=============================================================="
 for name in m16b1 m8b2 m8b1; do
-  f="$PROJECT/$name/results.csv"
+  f="runs/detect/$PROJECT/$name/results.csv"
   if [ -f "$f" ]; then
     map=$(tail -n 1 "$f" | awk -F',' '{print $9}')
     echo "  $name  : mAP50-95 = $map"
@@ -45,4 +45,4 @@ for name in m16b1 m8b2 m8b1; do
     echo "  $name  : (未找到 results.csv)"
   fi
 done
-echo "结果文件: $PROJECT/{m16b1,m8b2,m8b1}/results.csv"
+echo "结果文件: runs/detect/$PROJECT/{m16b1,m8b2,m8b1}/results.csv"
