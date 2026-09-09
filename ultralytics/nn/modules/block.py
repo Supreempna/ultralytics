@@ -58,6 +58,8 @@ __all__ = (
     "NAFBlockFull",
     "NAFNet",
     "NAFNetFull",
+    "NAFNetLog",
+    "NAFNetMul",
 )
 
 
@@ -2211,6 +2213,74 @@ class NAFNet(nn.Module):
         feat = self.blocks(feat)
         out = self.recover(feat)
         return identity - out
+
+
+class NAFNetMul(nn.Module):
+    """NAFNet variant with multiplicative residual for speckle (multiplicative) noise.
+
+    For multiplicative speckle noise ``I_noise = I_clean * N``, a multiplicative residual
+    ``output = x * exp(-f(x))`` matches the noise model better than the additive residual
+    ``output = x - f(x)``. ``exp(-f(x))`` estimates 1/N and is always positive, with
+    ``f(x) = 0`` giving the identity mapping.
+    """
+
+    def __init__(self, c1, c2, mid_channels=16, num_blocks=2):
+        """Initialize the multiplicative-residual NAFNet variant.
+
+        Args:
+            c1 (int): Number of input channels.
+            c2 (int): Number of output channels.
+            mid_channels (int): Hidden channels for the NAFBlock stack.
+            num_blocks (int): Number of NAFBlocks.
+        """
+        super().__init__()
+        self.embed = nn.Conv2d(c1, mid_channels, 3, 1, 1)
+        self.blocks = nn.Sequential(*(NAFBlock(mid_channels) for _ in range(num_blocks)))
+        self.recover = nn.Conv2d(mid_channels, c2, 3, 1, 1)
+
+    def forward(self, x):
+        """Forward pass with multiplicative residual: output = x * exp(-f(x))."""
+        feat = self.embed(x)
+        feat = self.blocks(feat)
+        out = self.recover(feat)
+        return x * torch.exp(-out)
+
+
+class NAFNetLog(nn.Module):
+    """NAFNet variant operating in the log domain for multiplicative speckle noise.
+
+    log() turns multiplicative noise into additive noise::
+
+        log(I_noise) = log(I_clean) + log(N)
+
+    so an additive-residual denoiser applied in log domain (then exp back) is a natural fit
+    for speckle. Uses ``eps`` to avoid log(0) and clamps the output to [0, 1].
+    """
+
+    def __init__(self, c1, c2, mid_channels=16, num_blocks=2, eps=1e-6):
+        """Initialize the log-domain NAFNet variant.
+
+        Args:
+            c1 (int): Number of input channels.
+            c2 (int): Number of output channels.
+            mid_channels (int): Hidden channels for the NAFBlock stack.
+            num_blocks (int): Number of NAFBlocks.
+            eps (float): Small constant added before log to avoid log(0).
+        """
+        super().__init__()
+        self.eps = eps
+        self.embed = nn.Conv2d(c1, mid_channels, 3, 1, 1)
+        self.blocks = nn.Sequential(*(NAFBlock(mid_channels) for _ in range(num_blocks)))
+        self.recover = nn.Conv2d(mid_channels, c2, 3, 1, 1)
+
+    def forward(self, x):
+        """Forward pass: log -> additive residual denoise -> exp -> clamp."""
+        x_log = torch.log(x + self.eps)
+        feat = self.embed(x_log)
+        feat = self.blocks(feat)
+        out = self.recover(feat)
+        y = torch.exp(x_log - out) - self.eps
+        return torch.clamp(y, 0.0, 1.0)
 
 
 class NAFBlockFull(nn.Module):

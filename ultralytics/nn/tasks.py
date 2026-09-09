@@ -57,6 +57,8 @@ from ultralytics.nn.modules import (
     LRPCHead,
     NAFNet,
     NAFNetFull,
+    NAFNetLog,
+    NAFNetMul,
     Pose,
     Pose26,
     RepC3,
@@ -1857,7 +1859,7 @@ def parse_model(d, ch, verbose=True):
                 legacy = False
         elif m is AIFI:
             args = [ch[f], *args]
-        elif m in frozenset({NAFNet, NAFNetFull, SpeckleNoise}):
+        elif m in frozenset({NAFNet, NAFNetFull, NAFNetLog, NAFNetMul, SpeckleNoise}):
             # Pass-through preprocessing modules: inject c1 from incoming layer,
             # c2 from YAML args, NO width scaling (output channels must match input).
             c1, c2 = ch[f], args[0]
