@@ -24,6 +24,7 @@ __all__ = (
     "LightConv",
     "RepConv",
     "SpatialAttention",
+    "WeightedConcat",
 )
 
 
@@ -639,6 +640,42 @@ class Concat(nn.Module):
             (torch.Tensor): Concatenated tensor.
         """
         return torch.cat(x, self.d)
+
+
+class WeightedConcat(nn.Module):
+    """Weighted (BiFPN-style) feature fusion: learnable per-input scale before concatenation.
+
+    Unlike plain Concat (all inputs contribute equally), each input tensor is multiplied by a
+    softmax-normalized learnable weight, so the neck can adapt the relative contribution of each
+    scale to the target size distribution. Weights are scaled by ``len(x)`` so that at
+    initialization the module is exactly equivalent to plain Concat (all weights = 1).
+    """
+
+    def __init__(self, c1_list, dimension=1):
+        """Initialize WeightedConcat.
+
+        Args:
+            c1_list (list[int]): Input channel counts (one per fused tensor).
+            dimension (int): Dimension along which to concatenate tensors.
+        """
+        super().__init__()
+        self.d = dimension
+        self.c1_list = list(c1_list)
+        self.weights = nn.Parameter(torch.ones(len(self.c1_list)))
+
+    def forward(self, x: list[torch.Tensor]):
+        """Fuse the input tensors with learnable per-scale weights."""
+        w = len(x) * torch.softmax(self.weights, dim=0)  # equals 1 at init -> same as Concat
+        return torch.cat([wi * xi for wi, xi in zip(w, x)], self.d)
+
+    def extra_repr(self):
+        """Return extra representation string."""
+        return f"inputs={len(self.c1_list)}, d={self.d}"
+
+    @property
+    def c2(self):
+        """Return the total concatenated channel count."""
+        return sum(self.c1_list)
 
 
 class Index(nn.Module):

@@ -56,6 +56,7 @@ from ultralytics.nn.modules import (
     Index,
     LRPCHead,
     NAFNet,
+    NAFNetEdge,
     NAFNetFull,
     NAFNetLog,
     NAFNetMul,
@@ -73,6 +74,7 @@ from ultralytics.nn.modules import (
     SemanticSegment,
     SpeckleNoise,
     TorchVision,
+    WeightedConcat,
     WorldDetect,
     YOLOEDetect,
     YOLOESegment,
@@ -1859,7 +1861,7 @@ def parse_model(d, ch, verbose=True):
                 legacy = False
         elif m is AIFI:
             args = [ch[f], *args]
-        elif m in frozenset({NAFNet, NAFNetFull, NAFNetLog, NAFNetMul, SpeckleNoise}):
+        elif m in frozenset({NAFNet, NAFNetEdge, NAFNetFull, NAFNetLog, NAFNetMul, SpeckleNoise}):
             # Pass-through preprocessing modules: inject c1 from incoming layer,
             # c2 from YAML args, NO width scaling (output channels must match input).
             c1, c2 = ch[f], args[0]
@@ -1876,6 +1878,11 @@ def parse_model(d, ch, verbose=True):
             args = [ch[f]]
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
+        elif m is WeightedConcat:
+            # BiFPN-style weighted fusion: channel count is the same as Concat, but the module
+            # needs the per-input channel list to build its learnable per-scale weights.
+            c2 = sum(ch[x] for x in f)
+            args = [[ch[x] for x in f], *args]
         elif m in frozenset(
             {
                 Detect,

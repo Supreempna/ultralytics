@@ -57,9 +57,11 @@ __all__ = (
     "NAFBlock",
     "NAFBlockFull",
     "NAFNet",
+    "NAFNetEdge",
     "NAFNetFull",
     "NAFNetLog",
     "NAFNetMul",
+    "SobelEdge",
 )
 
 
@@ -2281,6 +2283,76 @@ class NAFNetLog(nn.Module):
         out = self.recover(feat)
         y = torch.exp(x_log - out) - self.eps
         return torch.clamp(y, 0.0, 1.0)
+
+
+class SobelEdge(nn.Module):
+    """Fixed (non-learnable) Sobel gradient-magnitude edge map, per-image normalized to [0, 1].
+
+    Used to tell a denoiser where the image structure is, so it can avoid smoothing it away.
+    The Sobel kernels are registered as a non-persistent buffer (moved with ``.to()`` but not
+    saved in the state_dict).
+    """
+
+    def __init__(self, channels=3):
+        """Initialize the fixed Sobel edge detector for ``channels`` input channels."""
+        super().__init__()
+        kx = torch.tensor([[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]])
+        ky = torch.tensor([[-1.0, -2.0, -1.0], [0.0, 0.0, 0.0], [1.0, 2.0, 1.0]])
+        weight = torch.stack((kx, ky)).unsqueeze(1)  # (2, 1, 3, 3)
+        weight = weight.repeat(channels, 1, 1, 1)  # (2C, 1, 3, 3) for depthwise conv
+        self.register_buffer("weight", weight, persistent=False)
+        self.channels = channels
+
+    def forward(self, x):
+        """Return a per-image normalized edge-magnitude map of shape (B, 1, H, W) in [0, 1]."""
+        g = F.conv2d(x, self.weight, padding=1, groups=self.channels)  # (B, 2C, H, W)
+        gx, gy = g.chunk(2, dim=1)
+        mag = torch.sqrt(gx * gx + gy * gy + 1e-6).amax(dim=1, keepdim=True)  # (B, 1, H, W)
+        return mag / (mag.flatten(1).amax(dim=1).view(-1, 1, 1, 1) + 1e-6)
+
+
+class NAFNetEdge(nn.Module):
+    """Edge-guided NAFNet: attenuate the denoising residual on structure/edge regions.
+
+    Motivation: a plain NAFNet residual removes target edges along with speckle (over-smoothing,
+    visible as target contours in the residual map). Gating the residual by a Sobel edge map lets
+    the network denoise flat regions while protecting structure::
+
+        output = x - (1 - w * edge) * f(x),    w = sigmoid(alpha) in (0, 1)
+
+    ``alpha`` is a learnable scalar (``alpha_init`` sets its start; negative => mild gating).
+    With more parameters in the gate, see the learnable-gate variant in the paper discussion.
+    """
+
+    def __init__(self, c1, c2, mid_channels=16, num_blocks=2, alpha_init=-1.0):
+        """Initialize the edge-guided NAFNet variant.
+
+        Args:
+            c1 (int): Number of input channels.
+            c2 (int): Number of output channels.
+            mid_channels (int): Hidden channels for the NAFBlock stack.
+            num_blocks (int): Number of NAFBlocks.
+            alpha_init (float): Initial value of the learnable edge-gating strength.
+        """
+        super().__init__()
+        self.embed = nn.Conv2d(c1, mid_channels, 3, 1, 1)
+        self.blocks = nn.Sequential(*(NAFBlock(mid_channels) for _ in range(num_blocks)))
+        self.recover = nn.Conv2d(mid_channels, c2, 3, 1, 1)
+        self.edge = SobelEdge(c1)
+        self.alpha = nn.Parameter(torch.tensor(float(alpha_init)))
+
+    def forward(self, x):
+        """Forward pass: compute the residual, then attenuate it on edges."""
+        feat = self.embed(x)
+        feat = self.blocks(feat)
+        out = self.recover(feat)
+        edge = self.edge(x)  # (B, 1, H, W) in [0, 1]
+        gate = 1.0 - torch.sigmoid(self.alpha) * edge  # gate ~1 on flat regions, <1 on edges
+        return x - out * gate
+
+    def extra_repr(self):
+        """Return extra representation string."""
+        return f"alpha={self.alpha.item():.3f} (gate strength={torch.sigmoid(self.alpha).item():.3f})"
 
 
 class NAFBlockFull(nn.Module):
