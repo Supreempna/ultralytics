@@ -60,6 +60,9 @@ from ultralytics.nn.modules import (
     NAFNetFull,
     NAFNetLog,
     NAFNetMul,
+    NAFNetWavelet,
+    NAFNetAcoustic,
+    NAFNetWaveletAcoustic,
     Pose,
     Pose26,
     RepC3,
@@ -1861,7 +1864,7 @@ def parse_model(d, ch, verbose=True):
                 legacy = False
         elif m is AIFI:
             args = [ch[f], *args]
-        elif m in frozenset({NAFNet, NAFNetEdge, NAFNetFull, NAFNetLog, NAFNetMul, SpeckleNoise}):
+        elif m in frozenset({NAFNet, NAFNetEdge, NAFNetFull, NAFNetLog, NAFNetMul, NAFNetWavelet, NAFNetAcoustic, NAFNetWaveletAcoustic, SpeckleNoise}):
             # Pass-through preprocessing modules: inject c1 from incoming layer,
             # c2 from YAML args, NO width scaling (output channels must match input).
             c1, c2 = ch[f], args[0]

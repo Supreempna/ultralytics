@@ -2355,6 +2355,167 @@ class NAFNetEdge(nn.Module):
         return f"alpha={self.alpha.item():.3f} (gate strength={torch.sigmoid(self.alpha).item():.3f})"
 
 
+
+
+def haar_dwt(x):
+    """2D Haar Discrete Wavelet Transform (lossless and exact).
+
+    Splits input of shape (B, C, H, W) into 4 subbands of shape (B, C, H/2, W/2):
+      - ll: low-frequency approximation (acoustic energy & shadow geometry)
+      - lh: vertical high-frequency details
+      - hl: horizontal high-frequency details
+      - hh: diagonal high-frequency details
+    """
+    x0 = x[:, :, 0::2, 0::2]
+    x1 = x[:, :, 1::2, 0::2]
+    x2 = x[:, :, 0::2, 1::2]
+    x3 = x[:, :, 1::2, 1::2]
+    ll = (x0 + x1 + x2 + x3) * 0.5
+    lh = (-x0 + x1 - x2 + x3) * 0.5
+    hl = (-x0 - x1 + x2 + x3) * 0.5
+    hh = (x0 - x1 - x2 + x3) * 0.5
+    return ll, lh, hl, hh
+
+
+def haar_idwt(ll, lh, hl, hh):
+    """2D Haar Inverse Discrete Wavelet Transform (lossless and exact).
+
+    Reconstructs full-resolution tensor of shape (B, C, H, W) from 4 subbands.
+    Differentiable and autograd-safe.
+    """
+    x0 = (ll - lh - hl + hh) * 0.5
+    x1 = (ll + lh - hl - hh) * 0.5
+    x2 = (ll - lh + hl - hh) * 0.5
+    x3 = (ll + lh + hl + hh) * 0.5
+    col0 = torch.stack([x0, x1], dim=3)
+    col1 = torch.stack([x2, x3], dim=3)
+    grid = torch.stack([col0, col1], dim=5)
+    B, C, H2, _, W2, _ = grid.shape
+    return grid.reshape(B, C, H2 * 2, W2 * 2)
+
+
+class NAFNetWavelet(nn.Module):
+    """Wavelet-Domain NAFNet for Sonar Image Despeckling and Feature Preservation.
+
+    Motivation:
+      In forward-looking sonar, spatial denoisers inadvertently smooth out weak acoustic target
+      contours and shadows (over-smoothing dilemma). Haar Wavelet Transform mathematically decouples:
+        1. Low-frequency approximation (LL): captures global acoustic illumination, target geometry,
+           and acoustic shadow voids. LL completely bypasses denoising to guarantee ZERO edge blur.
+        2. High-frequency details (LH, HL, HH): carries multiplicative speckle noise and sharp highlights.
+           A lightweight NAFBlock stack predicts and subtracts the high-frequency speckle perturbation.
+
+    Inverse Haar DWT reconstructs the denoised image. At initialization, recover layer weights are
+    zero-initialized, making the entire module an exact identity mapping (identity diff < 1e-6).
+    """
+
+    def __init__(self, c1, c2, mid_channels=16, num_blocks=2):
+        super().__init__()
+        self.c1 = c1
+        self.c2 = c2
+        self.embed = nn.Conv2d(c1 * 3, mid_channels, 3, 1, 1)
+        self.blocks = nn.Sequential(*(NAFBlock(mid_channels) for _ in range(num_blocks)))
+        self.recover = nn.Conv2d(mid_channels, c2 * 3, 3, 1, 1)
+        nn.init.zeros_(self.recover.weight)
+        nn.init.zeros_(self.recover.bias)
+
+    def forward(self, x):
+        ll, lh, hl, hh = haar_dwt(x)
+        hf = torch.cat([lh, hl, hh], dim=1)
+        feat = self.embed(hf)
+        feat = self.blocks(feat)
+        noise_hf = self.recover(feat)
+        denoised_hf = hf - noise_hf
+        c = self.c2
+        d_lh = denoised_hf[:, 0:c]
+        d_hl = denoised_hf[:, c : 2 * c]
+        d_hh = denoised_hf[:, 2 * c : 3 * c]
+        return haar_idwt(ll, d_lh, d_hl, d_hh)
+
+
+class NAFNetAcoustic(nn.Module):
+    """Acoustic Highlight-Shadow Dual Prior Guided NAFNet for Sonar Object Detection.
+
+    Motivation:
+      Unlike optical images, forward-looking sonar images follow an acoustic reflection-occlusion
+      physics model: targets consist of front-surface specular highlights and trailing acoustic shadows.
+      Weak targets like victims have low acoustic impedance contrast, making them hard to detect.
+
+      This module extracts:
+        - Local background: mu = AvgPool(x)
+        - Specular highlight: H = ReLU(x - mu)
+        - Acoustic shadow: S = ReLU(mu - x)
+      and gates the denoising residual using these physical priors to prevent shadow distortion while
+      actively suppressing highlight speckle.
+    """
+
+    def __init__(self, c1, c2, mid_channels=16, num_blocks=2, kernel_size=7):
+        super().__init__()
+        self.c1 = c1
+        self.c2 = c2
+        self.pool = nn.AvgPool2d(kernel_size=kernel_size, stride=1, padding=kernel_size // 2)
+        self.embed = nn.Conv2d(c1 * 3, mid_channels, 3, 1, 1)
+        self.blocks = nn.Sequential(*(NAFBlock(mid_channels) for _ in range(num_blocks)))
+        self.recover = nn.Conv2d(mid_channels, c2, 3, 1, 1)
+        self.gate_conv = nn.Sequential(
+            nn.Conv2d(c1 * 2, max(mid_channels // 2, 4), 1),
+            SimpleGate(),
+            nn.Conv2d(max(mid_channels // 4, 2), c2, 1),
+            nn.Sigmoid(),
+        )
+        nn.init.zeros_(self.recover.weight)
+        nn.init.zeros_(self.recover.bias)
+
+    def forward(self, x):
+        mu = self.pool(x)
+        h_light = torch.relu(x - mu)
+        s_shadow = torch.relu(mu - x)
+        prior = torch.cat([h_light, s_shadow], dim=1)
+        gate = self.gate_conv(prior)
+        inp = torch.cat([x, h_light, s_shadow], dim=1)
+        feat = self.embed(inp)
+        feat = self.blocks(feat)
+        noise = self.recover(feat)
+        return x - gate * noise
+
+
+class NAFNetWaveletAcoustic(nn.Module):
+    """Hybrid Wavelet Disentanglement and Acoustic Prior NAFNet.
+
+    Combines frequency-domain subband decomposition (protecting low-frequency LL shadow geometry)
+    with acoustic highlight/shadow physical guidance in the high-frequency subbands.
+    """
+
+    def __init__(self, c1, c2, mid_channels=16, num_blocks=2, kernel_size=7):
+        super().__init__()
+        self.c1 = c1
+        self.c2 = c2
+        self.pool = nn.AvgPool2d(kernel_size=kernel_size, stride=1, padding=kernel_size // 2)
+        # HF has 3*c1 channels, downsampled acoustic priors have 2*c1 channels -> total 5*c1
+        self.embed = nn.Conv2d(c1 * 5, mid_channels, 3, 1, 1)
+        self.blocks = nn.Sequential(*(NAFBlock(mid_channels) for _ in range(num_blocks)))
+        self.recover = nn.Conv2d(mid_channels, c2 * 3, 3, 1, 1)
+        nn.init.zeros_(self.recover.weight)
+        nn.init.zeros_(self.recover.bias)
+
+    def forward(self, x):
+        mu = self.pool(x)
+        h_light = F.avg_pool2d(torch.relu(x - mu), 2)
+        s_shadow = F.avg_pool2d(torch.relu(mu - x), 2)
+        ll, lh, hl, hh = haar_dwt(x)
+        hf = torch.cat([lh, hl, hh], dim=1)
+        inp = torch.cat([hf, h_light, s_shadow], dim=1)
+        feat = self.embed(inp)
+        feat = self.blocks(feat)
+        noise_hf = self.recover(feat)
+        denoised_hf = hf - noise_hf
+        c = self.c2
+        d_lh = denoised_hf[:, 0:c]
+        d_hl = denoised_hf[:, c : 2 * c]
+        d_hh = denoised_hf[:, 2 * c : 3 * c]
+        return haar_idwt(ll, d_lh, d_hl, d_hh)
+
+
 class NAFBlockFull(nn.Module):
     """Full NAFBlock with Token Mixing + Channel Mixing (FFN) — matches the original paper.
 
