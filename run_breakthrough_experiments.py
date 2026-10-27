@@ -58,17 +58,29 @@ def run_cmd(cmd):
     return True
 
 
+def find_weights(project, exp_name):
+    candidates = [
+        Path("runs/detect") / project / exp_name / "weights" / "best.pt",
+        Path(project) / exp_name / "weights" / "best.pt",
+        Path("runs") / project / exp_name / "weights" / "best.pt",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
 def run_train(model_key, cfg_path, args):
     exp_name = f"{model_key}_{args.epochs}ep"
-    weights_path = Path(args.project) / exp_name / "weights" / "best.pt"
+    weights_path = find_weights(args.project, exp_name)
 
     if args.eval_only:
-        if not weights_path.exists():
-            print(f"[WARN] {weights_path} does not exist, cannot evaluate.")
+        if weights_path is None or not weights_path.exists():
+            print(f"[WARN] Could not find checkpoint for {exp_name}, cannot evaluate.")
             return None
         return weights_path
 
-    if weights_path.exists():
+    if weights_path is not None and weights_path.exists():
         print(f"[INFO] Found existing weights at {weights_path}, skipping training (delete to re-train).")
         return weights_path
 
@@ -78,8 +90,9 @@ def run_train(model_key, cfg_path, args):
         f"project={args.project} name={exp_name}"
     )
     success = run_cmd(cmd)
-    if not success or not weights_path.exists():
-        print(f"[ERROR] Training failed for {model_key}")
+    weights_path = find_weights(args.project, exp_name)
+    if not success or weights_path is None or not weights_path.exists():
+        print(f"[ERROR] Training failed or weights not found for {model_key}")
         return None
     return weights_path
 
