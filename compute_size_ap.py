@@ -20,7 +20,7 @@ Usage
     python compute_size_ap.py --model runs/detect/train/weights/best.pt \
         --data ultralytics/dataset/FLS_Detection_YOLO/FLSD.yaml --imgsz 640
 
-Notes
+Notes:
 -----
 - ``--conf 0.001`` (default) is required to build a full precision-recall curve.
 - NMS IoU threshold is fixed at 0.7 (ultralytics validation default).
@@ -111,7 +111,12 @@ def collect_predictions(model, images, imgsz, conf, device):
                     "image_id": img_id,
                     "category_id": int(c) + 1,
                     # convert center-xywh -> COCO top-left xywh
-                    "bbox": [round(float(xc - w / 2), 3), round(float(yc - h / 2), 3), round(float(w), 3), round(float(h), 3)],
+                    "bbox": [
+                        round(float(xc - w / 2), 3),
+                        round(float(yc - h / 2), 3),
+                        round(float(w), 3),
+                        round(float(h), 3),
+                    ],
                     "score": round(float(s), 5),
                 }
             )
@@ -128,11 +133,14 @@ def coco_evaluate(gt, preds):
         pred_path.write_text(json.dumps(preds))
 
         try:
-            from faster_coco_eval import COCO, COCOeval_faster as COCOeval  # noqa: N813
+            from faster_coco_eval import COCO
+            from faster_coco_eval import COCOeval_faster as COCOeval
+
             print("Evaluating with faster-coco-eval")
         except ImportError:
-            from pycocotools.coco import COCO  # noqa: N813
+            from pycocotools.coco import COCO
             from pycocotools.cocoeval import COCOeval
+
             print("Evaluating with pycocotools")
 
         anno = COCO(str(gt_path))
