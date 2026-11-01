@@ -4,8 +4,8 @@
 from __future__ import annotations
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
 
 from ultralytics.utils.torch_utils import fuse_conv_and_bn
 
@@ -45,15 +45,6 @@ __all__ = (
     "HGBlock",
     "HGStem",
     "ImagePoolingAttn",
-    "Proto",
-    "RepC3",
-    "RepNCSPELAN4",
-    "RepVGGDW",
-    "ResNetLayer",
-    "SCDown",
-    "SimpleGate",
-    "SpeckleNoise",
-    "TorchVision",
     "NAFBlock",
     "NAFBlockFull",
     "NAFNet",
@@ -61,7 +52,16 @@ __all__ = (
     "NAFNetFull",
     "NAFNetLog",
     "NAFNetMul",
+    "Proto",
+    "RepC3",
+    "RepNCSPELAN4",
+    "RepVGGDW",
+    "ResNetLayer",
+    "SCDown",
+    "SimpleGate",
     "SobelEdge",
+    "SpeckleNoise",
+    "TorchVision",
 )
 
 
@@ -2086,9 +2086,9 @@ class RealNVP(nn.Module):
 class SimpleGate(nn.Module):
     """SimpleGate activation: split channels in half and multiply element-wise.
 
-    Implements the nonlinearity-free activation mechanism from NAFNet (Nonlinear Activation Free Network).
-    Replaces traditional activation functions like ReLU/GELU with a simple channel-splitting and
-    element-wise multiplication operation.
+    Implements the nonlinearity-free activation mechanism from NAFNet (Nonlinear Activation Free Network). Replaces
+    traditional activation functions like ReLU/GELU with a simple channel-splitting and element-wise multiplication
+    operation.
 
     References:
         https://github.com/megvii-research/NAFNet
@@ -2110,10 +2110,13 @@ class SimpleGate(nn.Module):
 class NAFBlock(nn.Module):
     """Nonlinear Activation Free Block with SimpleGate and Simplified Channel Attention.
 
-    This block from NAFNet replaces traditional nonlinear activation functions with SimpleGate for
-    image restoration tasks. It uses LayerNorm, depthwise convolutions, SimpleGate activation, and
-    Simplified Channel Attention (SCA) to achieve effective feature transformation without
-    conventional activations.
+    This block from NAFNet replaces traditional nonlinear activation functions with SimpleGate for image restoration
+    tasks. It uses LayerNorm, depthwise convolutions, SimpleGate activation, and Simplified Channel Attention (SCA) to
+    achieve effective feature transformation without conventional activations.
+
+    Args:
+        c (int): Input/output channels.
+        dw_expand (int): Channel expansion factor for the depthwise convolution branch.
 
     Attributes:
         conv1 (nn.Conv2d): 1x1 convolution to expand channels.
@@ -2123,10 +2126,6 @@ class NAFBlock(nn.Module):
         sca (nn.Sequential): Simplified Channel Attention module.
         norm (LayerNorm2d): Layer normalization for 2D features.
         beta (nn.Parameter): Learnable scaling parameter for residual connection.
-
-    Args:
-        c (int): Input/output channels.
-        dw_expand (int): Channel expansion factor for the depthwise convolution branch.
     """
 
     def __init__(self, c, dw_expand=2):
@@ -2171,20 +2170,20 @@ class NAFBlock(nn.Module):
 class NAFNet(nn.Module):
     """NAFNet-based lightweight image denoising module for YOLO backbone preprocessing.
 
-    A compact denoising module that uses NAFBlocks with SimpleGate activation and global residual
-    learning (output = input - learned_noise). Designed to be inserted as the first component in
-    YOLO backbones for preprocessing noisy input images.
-
-    Attributes:
-        embed (nn.Conv2d): Input embedding convolution.
-        blocks (nn.Sequential): Stack of NAFBlocks for feature transformation.
-        recover (nn.Conv2d): Output recovery convolution.
+    A compact denoising module that uses NAFBlocks with SimpleGate activation and global residual learning (output =
+    input - learned_noise). Designed to be inserted as the first component in YOLO backbones for preprocessing noisy
+    input images.
 
     Args:
         c1 (int): Input channels.
         c2 (int): Output channels.
         mid_channels (int): Internal feature channels for NAFBlocks.
         num_blocks (int): Number of NAFBlocks in the stack.
+
+    Attributes:
+        embed (nn.Conv2d): Input embedding convolution.
+        blocks (nn.Sequential): Stack of NAFBlocks for feature transformation.
+        recover (nn.Conv2d): Output recovery convolution.
     """
 
     def __init__(self, c1, c2, mid_channels=16, num_blocks=2):
@@ -2220,10 +2219,9 @@ class NAFNet(nn.Module):
 class NAFNetMul(nn.Module):
     """NAFNet variant with multiplicative residual for speckle (multiplicative) noise.
 
-    For multiplicative speckle noise ``I_noise = I_clean * N``, a multiplicative residual
-    ``output = x * exp(-f(x))`` matches the noise model better than the additive residual
-    ``output = x - f(x)``. ``exp(-f(x))`` estimates 1/N and is always positive, with
-    ``f(x) = 0`` giving the identity mapping.
+    For multiplicative speckle noise ``I_noise = I_clean * N``, a multiplicative residual ``output = x * exp(-f(x))``
+    matches the noise model better than the additive residual ``output = x - f(x)``. ``exp(-f(x))`` estimates 1/N and is
+    always positive, with ``f(x) = 0`` giving the identity mapping.
     """
 
     def __init__(self, c1, c2, mid_channels=16, num_blocks=2):
@@ -2255,8 +2253,8 @@ class NAFNetLog(nn.Module):
 
         log(I_noise) = log(I_clean) + log(N)
 
-    so an additive-residual denoiser applied in log domain (then exp back) is a natural fit
-    for speckle. Uses ``eps`` to avoid log(0) and clamps the output to [0, 1].
+    so an additive-residual denoiser applied in log domain (then exp back) is a natural fit for speckle. Uses ``eps`` to
+    avoid log(0) and clamps the output to [0, 1].
     """
 
     def __init__(self, c1, c2, mid_channels=16, num_blocks=2, eps=1e-6):
@@ -2288,9 +2286,8 @@ class NAFNetLog(nn.Module):
 class SobelEdge(nn.Module):
     """Fixed (non-learnable) Sobel gradient-magnitude edge map, per-image normalized to [0, 1].
 
-    Used to tell a denoiser where the image structure is, so it can avoid smoothing it away.
-    The Sobel kernels are registered as a non-persistent buffer (moved with ``.to()`` but not
-    saved in the state_dict).
+    Used to tell a denoiser where the image structure is, so it can avoid smoothing it away. The Sobel kernels are
+    registered as a non-persistent buffer (moved with ``.to()`` but not saved in the state_dict).
     """
 
     def __init__(self, channels=3):
@@ -2314,14 +2311,14 @@ class SobelEdge(nn.Module):
 class NAFNetEdge(nn.Module):
     """Edge-guided NAFNet: attenuate the denoising residual on structure/edge regions.
 
-    Motivation: a plain NAFNet residual removes target edges along with speckle (over-smoothing,
-    visible as target contours in the residual map). Gating the residual by a Sobel edge map lets
-    the network denoise flat regions while protecting structure::
+    Motivation: a plain NAFNet residual removes target edges along with speckle (over-smoothing, visible as target
+    contours in the residual map). Gating the residual by a Sobel edge map lets the network denoise flat regions while
+    protecting structure::
 
         output = x - (1 - w * edge) * f(x),    w = sigmoid(alpha) in (0, 1)
 
-    ``alpha`` is a learnable scalar (``alpha_init`` sets its start; negative => mild gating).
-    With more parameters in the gate, see the learnable-gate variant in the paper discussion.
+    ``alpha`` is a learnable scalar (``alpha_init`` sets its start; negative => mild gating). With more parameters in
+    the gate, see the learnable-gate variant in the paper discussion.
     """
 
     def __init__(self, c1, c2, mid_channels=16, num_blocks=2, alpha_init=-1.0):
@@ -2355,16 +2352,14 @@ class NAFNetEdge(nn.Module):
         return f"alpha={self.alpha.item():.3f} (gate strength={torch.sigmoid(self.alpha).item():.3f})"
 
 
-
-
 def haar_dwt(x):
     """2D Haar Discrete Wavelet Transform (lossless and exact).
 
     Splits input of shape (B, C, H, W) into 4 subbands of shape (B, C, H/2, W/2):
-      - ll: low-frequency approximation (acoustic energy & shadow geometry)
-      - lh: vertical high-frequency details
-      - hl: horizontal high-frequency details
-      - hh: diagonal high-frequency details
+    - ll: low-frequency approximation (acoustic energy & shadow geometry)
+    - lh: vertical high-frequency details
+    - hl: horizontal high-frequency details
+    - hh: diagonal high-frequency details
     """
     x0 = x[:, :, 0::2, 0::2]
     x1 = x[:, :, 1::2, 0::2]
@@ -2380,8 +2375,7 @@ def haar_dwt(x):
 def haar_idwt(ll, lh, hl, hh):
     """2D Haar Inverse Discrete Wavelet Transform (lossless and exact).
 
-    Reconstructs full-resolution tensor of shape (B, C, H, W) from 4 subbands.
-    Differentiable and autograd-safe.
+    Reconstructs full-resolution tensor of shape (B, C, H, W) from 4 subbands. Differentiable and autograd-safe.
     """
     x0 = (ll - lh - hl + hh) * 0.5
     x1 = (ll + lh - hl - hh) * 0.5
@@ -2397,16 +2391,15 @@ def haar_idwt(ll, lh, hl, hh):
 class NAFNetWavelet(nn.Module):
     """Wavelet-Domain NAFNet for Sonar Image Despeckling and Feature Preservation.
 
-    Motivation:
-      In forward-looking sonar, spatial denoisers inadvertently smooth out weak acoustic target
-      contours and shadows (over-smoothing dilemma). Haar Wavelet Transform mathematically decouples:
+    Motivation: In forward-looking sonar, spatial denoisers inadvertently smooth out weak acoustic target contours and
+    shadows (over-smoothing dilemma). Haar Wavelet Transform mathematically decouples:
         1. Low-frequency approximation (LL): captures global acoustic illumination, target geometry,
            and acoustic shadow voids. LL completely bypasses denoising to guarantee ZERO edge blur.
         2. High-frequency details (LH, HL, HH): carries multiplicative speckle noise and sharp highlights.
            A lightweight NAFBlock stack predicts and subtracts the high-frequency speckle perturbation.
 
-    Inverse Haar DWT reconstructs the denoised image. At initialization, recover layer weights are
-    zero-initialized, making the entire module an exact identity mapping (identity diff < 1e-6).
+    Inverse Haar DWT reconstructs the denoised image. At initialization, recover layer weights are zero-initialized,
+    making the entire module an exact identity mapping (identity diff < 1e-6).
     """
 
     def __init__(self, c1, c2, mid_channels=16, num_blocks=2):
@@ -2436,17 +2429,16 @@ class NAFNetWavelet(nn.Module):
 class NAFNetAcoustic(nn.Module):
     """Acoustic Highlight-Shadow Dual Prior Guided NAFNet for Sonar Object Detection.
 
-    Motivation:
-      Unlike optical images, forward-looking sonar images follow an acoustic reflection-occlusion
-      physics model: targets consist of front-surface specular highlights and trailing acoustic shadows.
-      Weak targets like victims have low acoustic impedance contrast, making them hard to detect.
+    Motivation: Unlike optical images, forward-looking sonar images follow an acoustic reflection-occlusion physics
+    model: targets consist of front-surface specular highlights and trailing acoustic shadows. Weak targets like victims
+    have low acoustic impedance contrast, making them hard to detect.
 
-      This module extracts:
+    This module extracts:
         - Local background: mu = AvgPool(x)
         - Specular highlight: H = ReLU(x - mu)
         - Acoustic shadow: S = ReLU(mu - x)
-      and gates the denoising residual using these physical priors to prevent shadow distortion while
-      actively suppressing highlight speckle.
+    and gates the denoising residual using these physical priors to prevent shadow distortion while actively suppressing
+    highlight speckle.
     """
 
     def __init__(self, c1, c2, mid_channels=16, num_blocks=2, kernel_size=7):
@@ -2482,8 +2474,8 @@ class NAFNetAcoustic(nn.Module):
 class NAFNetWaveletAcoustic(nn.Module):
     """Hybrid Wavelet Disentanglement and Acoustic Prior NAFNet.
 
-    Combines frequency-domain subband decomposition (protecting low-frequency LL shadow geometry)
-    with acoustic highlight/shadow physical guidance in the high-frequency subbands.
+    Combines frequency-domain subband decomposition (protecting low-frequency LL shadow geometry) with acoustic
+    highlight/shadow physical guidance in the high-frequency subbands.
     """
 
     def __init__(self, c1, c2, mid_channels=16, num_blocks=2, kernel_size=7):
@@ -2519,11 +2511,17 @@ class NAFNetWaveletAcoustic(nn.Module):
 class NAFBlockFull(nn.Module):
     """Full NAFBlock with Token Mixing + Channel Mixing (FFN) — matches the original paper.
 
-    Unlike the simplified NAFBlock (Token Mixing only), this implementation includes both
-    residual sub-blocks in series, identical to the original NAFNet architecture:
+    Unlike the simplified NAFBlock (Token Mixing only), this implementation includes both residual sub-blocks in series,
+    identical to the original NAFNet architecture:
         Token Mixing (SCA inside) → Channel Mixing / FFN
 
     Each sub-block uses SimpleGate for nonlinearity instead of ReLU/GELU.
+
+    Args:
+        c: Input/output channels.
+        DW_Expand: Expansion factor for Token Mixing depthwise conv branch.
+        FFN_Expand: Expansion factor for FFN branch.
+        drop_out_rate: Dropout rate (0 = no dropout).
 
     Attributes:
         conv1-conv3: Token Mixing branch (1×1 expand → DW 3×3 → SG → SCA → 1×1 project).
@@ -2533,12 +2531,6 @@ class NAFBlockFull(nn.Module):
         norm1, norm2: LayerNorm2d for each sub-block.
         dropout1, dropout2: Dropout after each sub-block.
         beta, gamma: Learnable residual scaling parameters.
-
-    Args:
-        c: Input/output channels.
-        DW_Expand: Expansion factor for Token Mixing depthwise conv branch.
-        FFN_Expand: Expansion factor for FFN branch.
-        drop_out_rate: Dropout rate (0 = no dropout).
     """
 
     def __init__(self, c, DW_Expand=2, FFN_Expand=2, drop_out_rate=0.0):
@@ -2605,20 +2597,20 @@ class NAFBlockFull(nn.Module):
 class NAFNetFull(nn.Module):
     """NAFNet variant using full NAFBlockFull (Token Mixing + FFN) for YOLO preprocessing.
 
-    Same wrapper as NAFNet but uses NAFBlockFull internally, which includes both the Token
-    Mixing and Channel Mixing (FFN) sub-blocks from the original NAFNet paper. This enables
-    comparison experiments between simplified (NAFBlock) and full (NAFBlockFull) block designs.
-
-    Attributes:
-        embed (nn.Conv2d): Input embedding convolution (3→mid_channels).
-        blocks (nn.Sequential): Stack of NAFBlockFull instances.
-        recover (nn.Conv2d): Output recovery convolution (mid_channels→3).
+    Same wrapper as NAFNet but uses NAFBlockFull internally, which includes both the Token Mixing and Channel Mixing
+    (FFN) sub-blocks from the original NAFNet paper. This enables comparison experiments between simplified (NAFBlock)
+    and full (NAFBlockFull) block designs.
 
     Args:
         c1: Input channels.
         c2: Output channels.
         mid_channels: Internal feature channels.
         num_blocks: Number of NAFBlockFull instances.
+
+    Attributes:
+        embed (nn.Conv2d): Input embedding convolution (3→mid_channels).
+        blocks (nn.Sequential): Stack of NAFBlockFull instances.
+        recover (nn.Conv2d): Output recovery convolution (mid_channels→3).
     """
 
     def __init__(self, c1, c2, mid_channels=16, num_blocks=2):
@@ -2657,21 +2649,15 @@ class SpeckleNoise(nn.Module):
     Implements the multiplicative speckle noise model from forward-looking sonar (FLS):
         Inoise = Iclean * N                     (multiplicative only)
         Inoise = Iclean * N + G                 (with additive extension)
-    where N ~ Gamma(L, 1/L) with unit mean E[N]=1 and variance Var[N]=1/L,
-    and G ~ N(0, sigma^2) is optional additive Gaussian noise.
+    where N ~ Gamma(L, 1/L) with unit mean E[N]=1 and variance Var[N]=1/L, and G ~ N(0, sigma^2) is optional additive
+    Gaussian noise.
 
-    The Gamma-distributed noise N is randomly sampled independently for each forward pass
-    during training. During evaluation (model.eval()), the module acts as a pass-through,
-    outputting the clean input unchanged. This design enables seamless integration as a
-    data-augmentation layer: train with synthetic degradation, evaluate on clean or naturally
-    noisy inputs.
+    The Gamma-distributed noise N is randomly sampled independently for each forward pass during training. During
+    evaluation (model.eval()), the module acts as a pass-through, outputting the clean input unchanged. This design
+    enables seamless integration as a data-augmentation layer: train with synthetic degradation, evaluate on clean or
+    naturally noisy inputs.
 
     The module is fully end-to-end compatible with YOLO YAML model definitions via parse_model.
-
-    Attributes:
-        L (float): Number of looks (L >= 1). Lower L produces stronger multiplicative noise.
-        additive (bool): Whether to add additive Gaussian noise on top of speckle noise.
-        additive_sigma (float): Standard deviation of the additive Gaussian noise component.
 
     Args:
         c1 (int): Input channels.
@@ -2679,6 +2665,11 @@ class SpeckleNoise(nn.Module):
         L (float): Number of looks, controlling speckle noise strength. Lower = stronger.
         additive (bool): Enable additive Gaussian noise.
         additive_sigma (float): Std deviation of Gaussian noise.
+
+    Attributes:
+        L (float): Number of looks (L >= 1). Lower L produces stronger multiplicative noise.
+        additive (bool): Whether to add additive Gaussian noise on top of speckle noise.
+        additive_sigma (float): Standard deviation of the additive Gaussian noise component.
 
     References:
         [42] G. D. Young and N. S. Subotic, "Maximum likelihood estimation of the
