@@ -62,6 +62,7 @@ __all__ = (
     "NAFNetLog",
     "NAFNetMul",
     "SobelEdge",
+    "DySample",
 )
 
 
@@ -2737,3 +2738,91 @@ class SpeckleNoise(nn.Module):
     def extra_repr(self):
         """Return a string with extra representation information."""
         return f"L={self.L}, additive={self.additive}, additive_sigma={self.additive_sigma}"
+
+
+
+class DySample(nn.Module):
+    """Ultra-lightweight Dynamic Point-Sampling Upsampler (ICCV 2023).
+
+    Replaces standard nearest/bilinear interpolation with content-aware dynamic point sampling.
+    Pure PyTorch, zero custom CUDA dependency, negligible parameter overhead.
+    Reference: Liu et al., 'Learning to Upsample by Learning to Sample', ICCV 2023.
+    """
+
+    def __init__(self, in_channels, scale=2, style="lp", groups=4, dyscope=False):
+        super().__init__()
+        self.scale = scale
+        self.style = style
+        # Automatically choose groups divisor of in_channels
+        if groups > in_channels or in_channels % groups != 0:
+            for g in [4, 2, 1]:
+                if in_channels % g == 0:
+                    groups = g
+                    break
+        self.groups = groups
+
+        assert style in ["lp", "pl"]
+        if style == "pl":
+            assert in_channels >= scale**2 and in_channels % (scale**2) == 0
+            in_channels = in_channels // (scale**2)
+            out_channels = 2 * groups
+        else:
+            out_channels = 2 * groups * (scale**2)
+
+        self.offset = nn.Conv2d(in_channels, out_channels, 1)
+        nn.init.normal_(self.offset.weight, std=0.001)
+        if self.offset.bias is not None:
+            nn.init.constant_(self.offset.bias, 0)
+
+        if dyscope:
+            self.scope = nn.Conv2d(in_channels, out_channels, 1, bias=False)
+            nn.init.constant_(self.scope.weight, 0)
+
+        self.register_buffer("init_pos", self._init_pos(), persistent=False)
+
+    def _init_pos(self):
+        h = torch.arange((-self.scale + 1) / 2, (self.scale - 1) / 2 + 1) / self.scale
+        return (
+            torch.stack(torch.meshgrid([h, h], indexing="ij"))
+            .transpose(1, 2)
+            .repeat(1, self.groups, 1)
+            .reshape(1, -1, 1, 1)
+        )
+
+    def sample(self, x, offset):
+        B, _, H, W = offset.shape
+        offset = offset.view(B, 2, -1, H, W)
+        coords_h = torch.arange(H, dtype=x.dtype, device=x.device) + 0.5
+        coords_w = torch.arange(W, dtype=x.dtype, device=x.device) + 0.5
+        coords = (
+            torch.stack(torch.meshgrid([coords_w, coords_h], indexing="ij"))
+            .transpose(1, 2)
+            .unsqueeze(1)
+            .unsqueeze(0)
+        )
+
+        normalizer = torch.tensor([W, H], dtype=x.dtype, device=x.device).view(1, 2, 1, 1, 1)
+        coords = 2 * (coords + offset) / normalizer - 1
+
+        coords = (
+            F.pixel_shuffle(coords.view(B, -1, H, W), self.scale)
+            .view(B, 2, -1, self.scale * H, self.scale * W)
+            .permute(0, 2, 3, 4, 1)
+            .contiguous()
+            .flatten(0, 1)
+        )
+
+        return F.grid_sample(
+            x.reshape(B * self.groups, -1, H, W),
+            coords,
+            mode="bilinear",
+            align_corners=False,
+            padding_mode="border",
+        ).view(B, -1, self.scale * H, self.scale * W)
+
+    def forward(self, x):
+        if hasattr(self, "scope"):
+            offset = self.offset(x) * self.scope(x).sigmoid() * 0.5 + self.init_pos.to(x.device, x.dtype)
+        else:
+            offset = self.offset(x) * 0.25 + self.init_pos.to(x.device, x.dtype)
+        return self.sample(x, offset)

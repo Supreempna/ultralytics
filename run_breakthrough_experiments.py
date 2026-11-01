@@ -24,6 +24,7 @@ from pathlib import Path
 # Available models
 MODEL_CONFIGS = {
     "Wavelet": "ultralytics/cfg/models/26/yolo26n-NAFNetWavelet.yaml",
+    "WaveletDySample": "ultralytics/cfg/models/26/yolo26n-NAFNetWavelet-DySample.yaml",
     "Acoustic": "ultralytics/cfg/models/26/yolo26n-NAFNetAcoustic.yaml",
     "WaveletAcoustic": "ultralytics/cfg/models/26/yolo26n-NAFNetWaveletAcoustic.yaml",
     "VanillaNAFNet": "ultralytics/cfg/models/26/yolo26n-NAFNet.yaml",
@@ -44,7 +45,7 @@ def parse_args():
     parser.add_argument("--batch", type=int, default=16, help="Batch size")
     parser.add_argument("--imgsz", type=int, default=640, help="Image size")
     parser.add_argument("--workers", type=int, default=8, help="Dataloader workers")
-    parser.add_argument("--project", type=str, default="runs/breakthrough", help="Experiment project dir")
+    parser.add_argument("--project", type=str, default="breakthrough", help="Experiment project dir (defaults to runs/detect/breakthrough)")
     parser.add_argument("--eval-only", action="store_true", help="Only run evaluation on existing best.pt weights")
     return parser.parse_args()
 

@@ -63,6 +63,7 @@ from ultralytics.nn.modules import (
     NAFNetWavelet,
     NAFNetAcoustic,
     NAFNetWaveletAcoustic,
+    DySample,
     Pose,
     Pose26,
     RepC3,
@@ -1881,6 +1882,10 @@ def parse_model(d, ch, verbose=True):
             args = [ch[f]]
         elif m is Concat:
             c2 = sum(ch[x] for x in f)
+        elif m is DySample:
+            c1 = ch[f]
+            c2 = c1
+            args = [c1, *args]
         elif m is WeightedConcat:
             # BiFPN-style weighted fusion: channel count is the same as Concat, but the module
             # needs the per-input channel list to build its learnable per-scale weights.

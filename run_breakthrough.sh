@@ -100,6 +100,11 @@ if [ "$TRACK" = "all" ] || [ "$TRACK" = "WaveletAcoustic" ]; then
     run_single_track "ultralytics/cfg/models/26/yolo26n-NAFNetWaveletAcoustic.yaml" "WaveletAcoustic_${EPOCHS}ep" "Track C (WaveletAcoustic)"
 fi
 
+# Track D: WaveletDySample (Ablation Step 2: DySample in Neck)
+if [ "$TRACK" = "all" ] || [ "$TRACK" = "WaveletDySample" ] || [ "$TRACK" = "DySample" ]; then
+    run_single_track "ultralytics/cfg/models/26/yolo26n-NAFNetWavelet-DySample.yaml" "WaveletDySample_${EPOCHS}ep" "Track D (Wavelet + DySample Neck)"
+fi
+
 echo ""
 echo "=========================================================="
 echo " All requested experiments finished!"
