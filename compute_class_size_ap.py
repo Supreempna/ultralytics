@@ -29,9 +29,8 @@ from pathlib import Path
 
 import yaml
 
-from ultralytics import YOLO
-
 from compute_size_ap import build_coco_gt, collect_predictions, list_images, resolve_labels_dir
+from ultralytics import YOLO
 
 SMALL_AREA = 32**2
 MEDIUM_AREA = 96**2
@@ -40,27 +39,27 @@ MIN_RELIABLE = 10  # flag bins with fewer than this many GT instances
 
 def load_coco(gt, preds):
     """Write JSON once, load COCO objects, and return (anno, pred, eval_cls, is_faster)."""
-    with contextlib.redirect_stdout(io.StringIO()):
-        with tempfile.TemporaryDirectory() as tmp:
-            tmp = Path(tmp)
-            gt_path = tmp / "gt.json"
-            pred_path = tmp / "pred.json"
-            gt_path.write_text(json.dumps(gt))
-            pred_path.write_text(json.dumps(preds))
+    with contextlib.redirect_stdout(io.StringIO()), tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        gt_path = tmp / "gt.json"
+        pred_path = tmp / "pred.json"
+        gt_path.write_text(json.dumps(gt))
+        pred_path.write_text(json.dumps(preds))
 
-            try:
-                from faster_coco_eval import COCO, COCOeval_faster as COCOeval  # noqa: N813
+        try:
+            from faster_coco_eval import COCO
+            from faster_coco_eval import COCOeval_faster as COCOeval
 
-                anno = COCO(str(gt_path))
-                pred = anno.loadRes(str(pred_path))
-                is_faster = True
-            except ImportError:
-                from pycocotools.coco import COCO  # noqa: N813
-                from pycocotools.cocoeval import COCOeval
+            anno = COCO(str(gt_path))
+            pred = anno.loadRes(str(pred_path))
+            is_faster = True
+        except ImportError:
+            from pycocotools.coco import COCO
+            from pycocotools.cocoeval import COCOeval
 
-                anno = COCO(str(gt_path))
-                pred = anno.loadRes(str(pred_path))
-                is_faster = False
+            anno = COCO(str(gt_path))
+            pred = anno.loadRes(str(pred_path))
+            is_faster = False
     return anno, pred, COCOeval, is_faster
 
 
@@ -125,11 +124,10 @@ def main():
     overall = run_coco_eval(anno, pred, eval_cls, is_faster, img_ids, list(range(1, nc + 1)))
 
     header = (
-        f"{'Class':<12} {'n':>5} {'AP':>8} {'AP50':>8} {'AP75':>8} "
-        f"{'AP_small':>10} {'AP_medium':>11} {'AP_large':>10}"
+        f"{'Class':<12} {'n':>5} {'AP':>8} {'AP50':>8} {'AP75':>8} {'AP_small':>10} {'AP_medium':>11} {'AP_large':>10}"
     )
     print("\n" + "=" * len(header))
-    print("Per-class x Per-size COCO AP  (AP @ IoU=0.50:0.95; * = n<{})".format(MIN_RELIABLE))
+    print(f"Per-class x Per-size COCO AP  (AP @ IoU=0.50:0.95; * = n<{MIN_RELIABLE})")
     print("=" * len(header))
     print(header)
     print("-" * len(header))
