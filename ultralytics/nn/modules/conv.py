@@ -7,7 +7,7 @@ import math
 
 import numpy as np
 import torch
-import torch.nn as nn
+from torch import nn
 
 __all__ = (
     "CBAM",
@@ -645,10 +645,10 @@ class Concat(nn.Module):
 class WeightedConcat(nn.Module):
     """Weighted (BiFPN-style) feature fusion: learnable per-input scale before concatenation.
 
-    Unlike plain Concat (all inputs contribute equally), each input tensor is multiplied by a
-    softmax-normalized learnable weight, so the neck can adapt the relative contribution of each
-    scale to the target size distribution. Weights are scaled by ``len(x)`` so that at
-    initialization the module is exactly equivalent to plain Concat (all weights = 1).
+    Unlike plain Concat (all inputs contribute equally), each input tensor is multiplied by a softmax-normalized
+    learnable weight, so the neck can adapt the relative contribution of each scale to the target size distribution.
+    Weights are scaled by ``len(x)`` so that at initialization the module is exactly equivalent to plain Concat (all
+    weights = 1).
     """
 
     def __init__(self, c1_list, dimension=1):
