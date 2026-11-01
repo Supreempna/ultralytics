@@ -25,8 +25,8 @@ run() {
 
 # ---- 3 个容量消融配置（顺序执行）----
 run ultralytics/cfg/models/26/yolo26n-NAFNet-m16b1.yaml m16b1
-run ultralytics/cfg/models/26/yolo26n-NAFNet-m8b2.yaml  m8b2
-run ultralytics/cfg/models/26/yolo26n-NAFNet-m8b1.yaml  m8b1
+run ultralytics/cfg/models/26/yolo26n-NAFNet-m8b2.yaml m8b2
+run ultralytics/cfg/models/26/yolo26n-NAFNet-m8b1.yaml m8b1
 
 # ---- 可选：完整块 NAFNetFull（Token Mixing + FFN），显存更高，谨慎开 ----
 # 若 OOM，把 batch 改成 8

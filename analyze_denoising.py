@@ -22,6 +22,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 import torch
+
 from ultralytics import YOLO
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
@@ -103,7 +104,10 @@ def main():
         g_in, g_out = to_gray(x), to_gray(y)
         e_in, e_out = enl(g_in), enl(g_out)
         m_in, m_out = patch_median_enl(g_in), patch_median_enl(g_out)
-        enl_ins.append(e_in); enl_outs.append(e_out); med_ins.append(m_in); med_outs.append(m_out)
+        enl_ins.append(e_in)
+        enl_outs.append(e_out)
+        med_ins.append(m_in)
+        med_outs.append(m_out)
 
         print(f"{img_path.stem:<24} {e_in:>8.2f} {e_out:>9.2f} {m_in:>8.2f} {m_out:>9.2f}")
 
@@ -116,7 +120,9 @@ def main():
 
     if enl_ins:
         print("\n" + "-" * 52)
-        print(f"mean  ENL : {np.mean(enl_ins):.2f}  ->  {np.mean(enl_outs):.2f}   ({100*(np.mean(enl_outs)/np.mean(enl_ins)-1):+.1f}%)")
+        print(
+            f"mean  ENL : {np.mean(enl_ins):.2f}  ->  {np.mean(enl_outs):.2f}   ({100 * (np.mean(enl_outs) / np.mean(enl_ins) - 1):+.1f}%)"
+        )
         print(f"median ENL : {np.mean(med_ins):.2f}  ->  {np.mean(med_outs):.2f}")
         print(f"comparison images saved to: {out_dir}")
         if np.mean(enl_outs) > np.mean(enl_ins):
