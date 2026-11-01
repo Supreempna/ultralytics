@@ -21,6 +21,7 @@ import time
 from pathlib import Path
 
 import torch
+
 from ultralytics import YOLO
 
 
@@ -57,7 +58,7 @@ def main():
     device = torch.device("cpu") if args.device == "cpu" else torch.device("cuda", int(args.device))
 
     print(f"device={device}, imgsz={args.imgsz}, batch=1, iters={args.iters}")
-    print("")
+    print()
     print(f"{'model':<28} {'latency(ms)':>12} {'FPS':>10}")
     print("-" * 52)
 
