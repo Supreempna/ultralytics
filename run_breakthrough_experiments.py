@@ -15,7 +15,6 @@ Features:
 """
 
 import argparse
-import os
 import subprocess
 import sys
 import time
@@ -40,12 +39,19 @@ def parse_args():
         choices=list(MODEL_CONFIGS.keys()),
         help="List of model keys to train/evaluate",
     )
-    parser.add_argument("--data", type=str, default="ultralytics/dataset/FLS_Detection_YOLO/FLSD.yaml", help="Dataset config")
+    parser.add_argument(
+        "--data", type=str, default="ultralytics/dataset/FLS_Detection_YOLO/FLSD.yaml", help="Dataset config"
+    )
     parser.add_argument("--epochs", type=int, default=20, help="Training epochs (20 for screening, 50 for full)")
     parser.add_argument("--batch", type=int, default=16, help="Batch size")
     parser.add_argument("--imgsz", type=int, default=640, help="Image size")
     parser.add_argument("--workers", type=int, default=8, help="Dataloader workers")
-    parser.add_argument("--project", type=str, default="breakthrough", help="Experiment project dir (defaults to runs/detect/breakthrough)")
+    parser.add_argument(
+        "--project",
+        type=str,
+        default="breakthrough",
+        help="Experiment project dir (defaults to runs/detect/breakthrough)",
+    )
     parser.add_argument("--eval-only", action="store_true", help="Only run evaluation on existing best.pt weights")
     return parser.parse_args()
 
@@ -129,7 +135,7 @@ def main():
             results[model_key] = {"weights": str(weights), "output": eval_output}
 
     elapsed = time.time() - start_time
-    print(f"\nAll experiments completed in {elapsed/3600:.2f} hours.")
+    print(f"\nAll experiments completed in {elapsed / 3600:.2f} hours.")
     print("Summary saved in runs/breakthrough.")
 
 
